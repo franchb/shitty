@@ -56,6 +56,14 @@ struct ScreenInfo {
     u32 viewOffset = 0;
     u16 columns = 0;
     u16 rows = 0;
+    // Rows of history this screen is built to keep, which is what a
+    // caller compares against its own configuration to notice that the
+    // screen is stale. The alternate screen keeps none.
+    u16 saveLines = 0;
+    // Row slots actually backed by cells. The ring is rounded up to a
+    // power of two, so this can exceed rows + saveLines; it is what the
+    // screen costs rather than what it is allowed to hold.
+    u32 materializedRows = 0;
 };
 
 enum class ScreenSemanticPrompt : u8 {
@@ -91,6 +99,10 @@ struct Screen {
     };
 
     virtual Screen* resized(stl::ObjPool& pool, u16 columns, u16 rows, Cursor& cursor, Cursor* trackedCursor = nullptr) = 0;
+    // As resized, but also sets how many rows of history the result
+    // keeps: lowering it drops the oldest rows the new cap cannot hold.
+    // The alternate screen has no history and ignores the count.
+    virtual Screen* resizedWithHistory(stl::ObjPool& pool, u16 columns, u16 rows, u16 saveLines, Cursor& cursor, Cursor* trackedCursor = nullptr) = 0;
     virtual void dropHistory() = 0;
     virtual bool scrollView(i32 rows) = 0;
 

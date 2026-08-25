@@ -384,6 +384,7 @@ namespace {
         using ScreenBase<Traits>::ScreenBase;
 
         Screen* resized(ObjPool& pool, u16 columns, u16 rows, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) override;
+        Screen* resizedWithHistory(ObjPool& pool, u16 columns, u16 rows, u16 saveLines, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) override;
         void dropHistory() override;
         void writeAsciiLines(u16 row, const u8* input, const u16* lengths, u16 lineCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
         void scrollRows(u16 top, u16 bottom, i32 rows, const TerminalCell& attrs) override;
@@ -395,6 +396,7 @@ namespace {
         using ScreenBase<Traits>::ScreenBase;
 
         Screen* resized(ObjPool& pool, u16 columns, u16 rows, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) override;
+        Screen* resizedWithHistory(ObjPool& pool, u16 columns, u16 rows, u16 saveLines, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) override;
         void dropHistory() override;
         bool scrollView(i32 rows) override;
         void writeAsciiLines(u16 row, const u8* input, const u16* lengths, u16 lineCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
@@ -816,8 +818,19 @@ Screen* Screen::createInactiveAlternate(VtCellExtras& extras, ObjPool& pool) {
 
 template <typename Traits>
 Screen* PrimaryScreenImpl<Traits>::resized(ObjPool& destination, u16 columns, u16 rows, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) {
+    return this->resizedWithHistory(destination, columns, rows, (u16)(this->saveLines), cursor, trackedCursor);
+}
+
+template <typename Traits>
+Screen* PrimaryScreenImpl<Traits>::resizedWithHistory(ObjPool& destination, u16 columns, u16 rows, u16 saveLines, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) {
     ResizeState* const resizeState = this->moveIntoState();
+    resizeState->saveLines = saveLines;
     return makePrimaryFromState(this->extras, destination, *resizeState, columns, rows, this->colors, cursor, trackedCursor);
+}
+
+template <typename Traits>
+Screen* AlternateScreenImpl<Traits>::resizedWithHistory(ObjPool& destination, u16 columns, u16 rows, u16, Screen::Cursor& cursor, Screen::Cursor* trackedCursor) {
+    return this->resized(destination, columns, rows, cursor, trackedCursor);
 }
 
 template <typename Traits>
@@ -843,6 +856,8 @@ ScreenInfo ScreenBase<Traits>::info() const noexcept {
         .viewOffset = viewOffset,
         .columns = nCols,
         .rows = nRows,
+        .saveLines = (u16)(saveLines),
+        .materializedRows = testMaterializedRows(),
     };
 }
 
@@ -1175,8 +1190,14 @@ template <typename Traits>
 template <bool primary>
 void ScreenBase<Traits>::layoutCopy(ResizeState& state, u16 nCols_, u16 nRows_, Cursor& cursorState, Cursor* trackedCursor) {
     Vector<const Row*> sourceHistory;
-    sourceHistory.grow(state.historyRows);
-    for (int row = -(int)(state.historyRows); row < 0; ++row) {
+    // A rebuild may be lowering the history cap, and the ring is sized
+    // for the new one: carrying every old row would claim more history
+    // than there are slots to hold it, and the surplus would wrap over
+    // rows still in use. Keep the newest that fit and drop the rest,
+    // which is what ageing them out would have done anyway.
+    const u32 carriedHistory = min<u32>(state.historyRows, (u32)(saveLines));
+    sourceHistory.grow(carriedHistory);
+    for (int row = -(int)(carriedHistory); row < 0; ++row) {
         sourceHistory.pushBack(stateRowObject(state, row));
     }
     Vector<const Row*> sourceScreen;

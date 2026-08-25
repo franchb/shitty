@@ -576,17 +576,27 @@ uint32_t shitty_vt_scroll_to(shitty_vt* vt, uint32_t offset) {
 
 uint32_t shitty_vt_scroll_offset(const shitty_vt* vt) {
     const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
-    return update != nullptr ? update->viewOffset : 0;
+    if (update == nullptr || update->shapes == nullptr) {
+        return 0;
+    }
+    return update->shapes->info().viewOffset;
 }
 
 uint32_t shitty_vt_history_rows(const shitty_vt* vt) {
     const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
-    return update != nullptr ? update->historyRows : 0;
+    if (update == nullptr || update->shapes == nullptr) {
+        return 0;
+    }
+    return update->shapes->info().historyRows;
 }
 
 uint32_t shitty_vt_total_rows(const shitty_vt* vt) {
     const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
-    return update != nullptr ? update->historyRows + vt->geometry.rows : 0;
+    if (update == nullptr || update->shapes == nullptr) {
+        return 0;
+    }
+    const ScreenInfo info = update->shapes->info();
+    return info.historyRows + info.rows;
 }
 
 void shitty_vt_row_cells(shitty_vt* vt, uint32_t index, shitty_vt_cell_fn fn, void* user) {
@@ -597,18 +607,46 @@ void shitty_vt_row_cells(shitty_vt* vt, uint32_t index, shitty_vt_cell_fn fn, vo
     if (update == nullptr || update->shapes == nullptr) {
         return;
     }
-    if (index >= update->historyRows + vt->geometry.rows) {
+    Screen* const screen = update->shapes;
+    const ScreenInfo info = screen->info();
+    if (index >= info.historyRows + info.rows) {
         return;
     }
-    Screen* const screen = update->shapes;
     // Logical row 0 is the top of the live screen and the history runs
     // negative from there, so an oldest-first index sits historyRows
     // above it. viewRow subtracts the current offset, so add it back and
     // the read is independent of where the user has scrolled.
-    const i32 logical = (i32)(index) - (i32)(update->historyRows);
-    const i32 view = logical + (i32)(update->viewOffset);
+    const i32 logical = (i32)(index) - (i32)(info.historyRows);
+    const i32 view = logical + (i32)(info.viewOffset);
     emitRow(vt, update->colors, screen->viewRow(view), (u16)(index), fn, user);
     vt->terminal->consume();
+}
+
+void shitty_vt_memory_usage(const shitty_vt* vt, shitty_vt_memory* out) {
+    if (out == nullptr) {
+        return;
+    }
+    *out = shitty_vt_memory{};
+    const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
+    if (update == nullptr || update->shapes == nullptr) {
+        return;
+    }
+    const ScreenInfo info = update->shapes->info();
+    out->allocated_rows = info.materializedRows;
+    out->capacity_rows = (u32)(info.rows) + info.saveLines;
+    out->columns = info.columns;
+    out->cell_size = (u32)(sizeof(TerminalCell));
+    out->cell_bytes = (u64)(info.materializedRows) * info.columns * sizeof(TerminalCell);
+}
+
+void shitty_vt_set_save_lines(shitty_vt* vt, uint16_t save_lines) {
+    if (vt->config.saveLines == save_lines) {
+        return;
+    }
+    vt->config.saveLines = save_lines;
+    // The terminal re-reads the configuration and rebuilds whatever the
+    // change invalidated, which for this setting is the primary screen.
+    vt->terminal->configChanged();
 }
 
 shitty_vt_cursor shitty_vt_cursor_state(const shitty_vt* vt) {

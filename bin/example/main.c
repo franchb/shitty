@@ -94,6 +94,7 @@ int main(int argc, char** argv) {
     int scroll = 0;
     long scroll_to = -1;
     int dump_rows = 0;
+    long new_save_lines = -1;
     if (argc >= 4) {
         columns = (uint16_t)atoi(argv[1]);
         rows = (uint16_t)atoi(argv[2]);
@@ -106,6 +107,9 @@ int main(int argc, char** argv) {
         scroll_to = argc >= 7 ? atol(argv[6]) : -1;
         /* Print every addressable row, history first, after the grid. */
         dump_rows = argc >= 8 ? atoi(argv[7]) : 0;
+        /* A history cap to apply after feeding; negative keeps the one
+         * the terminal was built with. */
+        new_save_lines = argc >= 9 ? atol(argv[8]) : -1;
     } else if (argc == 2) {
         path = argv[1];
     }
@@ -136,6 +140,10 @@ int main(int argc, char** argv) {
     }
     if (input != stdin) {
         fclose(input);
+    }
+
+    if (new_save_lines >= 0) {
+        shitty_vt_set_save_lines(vt, (uint16_t)new_save_lines);
     }
 
     shitty_vt_scroll(vt, scroll);
@@ -191,6 +199,19 @@ int main(int argc, char** argv) {
     }
 
     printf("scrollback: offset=%u history=%u total=%u\n", shitty_vt_scroll_offset(vt), shitty_vt_history_rows(vt), shitty_vt_total_rows(vt));
+
+    {
+        shitty_vt_memory memory;
+        shitty_vt_memory_usage(vt, &memory);
+        printf(
+            "memory: allocated_rows=%u capacity_rows=%u columns=%u cell_size=%u cell_bytes=%llu\n",
+            memory.allocated_rows,
+            memory.capacity_rows,
+            memory.columns,
+            memory.cell_size,
+            (unsigned long long)memory.cell_bytes
+        );
+    }
 
     if (dump_rows) {
         const uint32_t total = shitty_vt_total_rows(vt);

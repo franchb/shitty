@@ -2247,7 +2247,7 @@ void VtermImpl::resizeScreen(Screen*& frame, ObjPool*& pool, Screen::Cursor& cur
     ObjPool* const next = ObjPool::fromMemoryRaw();
     Screen* screen;
     try {
-        screen = frame->resized(*next, geometry.columns, geometry.rows, cursor, trackedStatePtr);
+        screen = frame->resizedWithHistory(*next, geometry.columns, geometry.rows, config().saveLines, cursor, trackedStatePtr);
     } catch (...) {
         delete next;
         throw;
@@ -3675,7 +3675,7 @@ void VtermImpl::switchScreenBufferMode(bool altScreenBufferMode_, bool clearAlte
         savedCursor = &savedCursorAlt;
         altScreenBufferMode = true;
     } else {
-        if (const ScreenInfo info = frame_pri->info(); info.columns != geometry.columns || info.rows != geometry.rows) {
+        if (const ScreenInfo info = frame_pri->info(); info.columns != geometry.columns || info.rows != geometry.rows || info.saveLines != config().saveLines) {
             Screen::Cursor cursorState{Point(posX, posY), lastCol};
             resizeScreen(frame_pri, framePriPool, cursorState, &savedCursorPri);
             posX = cursorState.position.x;
@@ -8842,6 +8842,8 @@ void VtermImpl::configChanged() {
     presentedTitle.xchg(nextPresentedTitle);
     titleSet = false;
     colors.changed();
+    updateExtraCellCount();
+    resizeGrid();
     exposeFrames();
     changePresentation();
     redraw();
@@ -8885,7 +8887,10 @@ void VtermImpl::resizeGrid() {
     const ScreenInfo info = cf->info();
     const u16 previousColumns = info.columns;
     const u16 previousRows = info.rows;
-    if (previousColumns == geometry.columns && previousRows == geometry.rows) {
+    // The history capacity is part of what makes a screen current: a
+    // configuration that only changed saveLines still needs the rebuild.
+    const bool historyCurrent = cf == frame_alt || info.saveLines == config().saveLines;
+    if (previousColumns == geometry.columns && previousRows == geometry.rows && historyCurrent) {
         if (synchronizedOutputMode) {
             setSynchronizedOutput(false);
         }

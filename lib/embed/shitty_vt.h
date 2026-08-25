@@ -138,6 +138,31 @@ extern "C" {
  * the last index is the bottom of the live screen. */
     uint32_t shitty_vt_total_rows(const shitty_vt*);
 
+    /* What the terminal is spending on its grid and history. Cells only:
+ * grapheme clusters, hyperlinks and sixel patches live in a separate
+ * store this does not count, so treat it as the floor of the real cost
+ * rather than the whole of it. */
+    typedef struct shitty_vt_memory {
+        /* Row slots actually backed by cells. The ring behind them is
+     * rounded up to a power of two, so this can exceed capacity_rows:
+     * it is what the screen costs, not what it is allowed to hold. */
+        uint32_t allocated_rows;
+        /* Rows the terminal will keep: rows + save_lines. */
+        uint32_t capacity_rows;
+        uint32_t columns;
+        /* Bytes in one cell, so an embedder can do its own arithmetic. */
+        uint32_t cell_size;
+        /* allocated_rows * columns * cell_size. */
+        uint64_t cell_bytes;
+    } shitty_vt_memory;
+
+    void shitty_vt_memory_usage(const shitty_vt*, shitty_vt_memory* out);
+
+    /* Changes how many rows of scrollback the terminal keeps. Lowering it
+ * drops the oldest rows that no longer fit, and does so at once rather
+ * than as the history is overwritten. The visible grid is untouched. */
+    void shitty_vt_set_save_lines(shitty_vt*, uint16_t save_lines);
+
     /* Walks one row by absolute index, oldest first, leaving the view
  * where it is - the row argument handed to the callback is the index
  * asked for. An index past the last row visits nothing. Use this to read
