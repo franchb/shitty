@@ -268,5 +268,64 @@ class ConfigFileTest(unittest.TestCase):
                 wait_for("second", terminal.window_title)
 
 
+    def test_reloading_a_smaller_save_lines_shrinks_the_history(self):
+        # saveLines used to be read once, at startup: a reload that
+        # changed it left the screen keeping whatever it began with.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "live.toml"
+            path.write_text("saveLines = 100\n")
+            with Shitty(
+                columns=20, rows=6, save_lines=None,
+                extra_arguments=("-config", path),
+            ) as terminal:
+                for index in range(40):
+                    terminal.write(f"line{index}\r\n".encode())
+                # Forty lines and their trailing newline over six rows.
+                self.assertEqual(terminal.scrollback_state()[0], 35)
+                before = terminal.screen_text()
+
+                path.write_text("saveLines = 5\n")
+                os.kill(terminal.process.pid, signal.SIGUSR1)
+
+                # scrollback_state reports the last presented frame, so
+                # drive one rather than reading the state before it.
+                def history():
+                    terminal.present()
+                    return terminal.scrollback_state()[0]
+
+                wait_for(5, history)
+                # The visible grid is untouched, and the rows kept are the
+                # newest five rather than the oldest.
+                self.assertEqual(terminal.screen_text(), before)
+                self.assertEqual(terminal.all_text()[0].rstrip(), "line30")
+
+    def test_reloading_a_larger_save_lines_does_not_restore_dropped_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "live.toml"
+            path.write_text("saveLines = 5\n")
+            with Shitty(
+                columns=20, rows=6, save_lines=None,
+                extra_arguments=("-config", path),
+            ) as terminal:
+                for index in range(40):
+                    terminal.write(f"line{index}\r\n".encode())
+                self.assertEqual(terminal.scrollback_state()[0], 5)
+
+                path.write_text("saveLines = 100\n")
+                os.kill(terminal.process.pid, signal.SIGUSR1)
+
+                def history():
+                    terminal.present()
+                    return terminal.scrollback_state()[0]
+
+                wait_for(5, history)
+                # Room to grow, but nothing to grow back into: the five
+                # kept rows are all that survived, and new output extends
+                # them rather than restoring what was dropped.
+                for index in range(40, 43):
+                    terminal.write(f"line{index}\r\n".encode())
+                wait_for(8, history)
+
+
 if __name__ == "__main__":
     unittest.main()

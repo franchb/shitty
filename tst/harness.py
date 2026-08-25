@@ -177,8 +177,10 @@ class Shitty:
                 str(child.fileno()),
                 "-geometry",
                 f"{columns}x{rows}",
-                "-saveLines",
-                str(save_lines),
+                # None leaves the option off the command line entirely, so
+                # a configured value is free to win - a reload cannot beat
+                # an explicit flag.
+                *(() if save_lines is None else ("-saveLines", str(save_lines))),
                 # Pin white-on-black and the sixteen palette slots
                 # to plain VGA with explicit color options, so the
                 # default scheme cannot shift color assertions. Scheme
