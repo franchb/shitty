@@ -455,6 +455,43 @@ namespace {
         attributes |= cell.overline ? SHITTY_VT_ATTR_OVERLINE : 0;
         return attributes;
     }
+
+    // One row of cells handed to an embedder's callback. The row number
+    // is passed through rather than derived, so a caller reading the
+    // history by index reports that index.
+    static void emitRow(shitty_vt* vt, const TerminalColors* colors, const ScreenRowRef& source, u16 row, shitty_vt_cell_fn fn, void* user) {
+        if (source.cells == nullptr) {
+            return;
+        }
+        CellExtraStore* const extras = vt->extras.store;
+        for (u16 column = 0; column < vt->geometry.columns; ++column) {
+            const TerminalCell& cell = source.cells[column];
+            if (cell.dwidth_cont) {
+                continue;
+            }
+            shitty_vt_cell out{};
+            u32 single = 0;
+            if (cell.hasExtra()) {
+                const GraphemeView grapheme = extras->grapheme(cell);
+                out.grapheme = grapheme.data();
+                out.grapheme_len = grapheme.count;
+            } else if (cell.uc_pt != 0) {
+                single = cell.uc_pt;
+                out.grapheme = &single;
+                out.grapheme_len = 1;
+            }
+            if (colors != nullptr) {
+                out.foreground = colors->resolveForeground(cell).packed();
+                out.background = colors->resolveBackground(cell).packed();
+                out.underline_color = colors->resolve(extras->underlineColor(cell)).packed();
+            }
+            out.attributes = (u16)(packAttributes(cell));
+            out.underline_style = (u8)(cell.underline_style);
+            out.width = cell.dwidth ? 2 : 1;
+            fn(user, row, column, &out);
+        }
+    }
+
 }
 
 static constexpr shitty_vt_callbacks noCallbacks{};
@@ -523,39 +560,8 @@ void shitty_vt_each_cell(shitty_vt* vt, shitty_vt_cell_fn fn, void* user) {
         return;
     }
     Screen* const screen = update->shapes;
-    const TerminalColors* const colors = update->colors;
-    CellExtraStore* const extras = vt->extras.store;
     for (u16 row = 0; row < vt->geometry.rows; ++row) {
-        const ScreenRowRef view = screen->viewRow(row);
-        if (view.cells == nullptr) {
-            continue;
-        }
-        for (u16 column = 0; column < vt->geometry.columns; ++column) {
-            const TerminalCell& cell = view.cells[column];
-            if (cell.dwidth_cont) {
-                continue;
-            }
-            shitty_vt_cell out{};
-            u32 single = 0;
-            if (cell.hasExtra()) {
-                const GraphemeView grapheme = extras->grapheme(cell);
-                out.grapheme = grapheme.data();
-                out.grapheme_len = grapheme.count;
-            } else if (cell.uc_pt != 0) {
-                single = cell.uc_pt;
-                out.grapheme = &single;
-                out.grapheme_len = 1;
-            }
-            if (colors != nullptr) {
-                out.foreground = colors->resolveForeground(cell).packed();
-                out.background = colors->resolveBackground(cell).packed();
-                out.underline_color = colors->resolve(extras->underlineColor(cell)).packed();
-            }
-            out.attributes = (u16)(packAttributes(cell));
-            out.underline_style = (u8)(cell.underline_style);
-            out.width = cell.dwidth ? 2 : 1;
-            fn(user, row, column, &out);
-        }
+        emitRow(vt, update->colors, screen->viewRow(row), row, fn, user);
     }
     vt->terminal->consume();
 }
@@ -576,6 +582,33 @@ uint32_t shitty_vt_scroll_offset(const shitty_vt* vt) {
 uint32_t shitty_vt_history_rows(const shitty_vt* vt) {
     const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
     return update != nullptr ? update->historyRows : 0;
+}
+
+uint32_t shitty_vt_total_rows(const shitty_vt* vt) {
+    const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
+    return update != nullptr ? update->historyRows + vt->geometry.rows : 0;
+}
+
+void shitty_vt_row_cells(shitty_vt* vt, uint32_t index, shitty_vt_cell_fn fn, void* user) {
+    if (fn == nullptr) {
+        return;
+    }
+    const TerminalUpdate* update = currentUpdate(vt);
+    if (update == nullptr || update->shapes == nullptr) {
+        return;
+    }
+    if (index >= update->historyRows + vt->geometry.rows) {
+        return;
+    }
+    Screen* const screen = update->shapes;
+    // Logical row 0 is the top of the live screen and the history runs
+    // negative from there, so an oldest-first index sits historyRows
+    // above it. viewRow subtracts the current offset, so add it back and
+    // the read is independent of where the user has scrolled.
+    const i32 logical = (i32)(index) - (i32)(update->historyRows);
+    const i32 view = logical + (i32)(update->viewOffset);
+    emitRow(vt, update->colors, screen->viewRow(view), (u16)(index), fn, user);
+    vt->terminal->consume();
 }
 
 shitty_vt_cursor shitty_vt_cursor_state(const shitty_vt* vt) {

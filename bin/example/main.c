@@ -78,6 +78,14 @@ static void on_bell(void* user) {
     printf("bell\n");
 }
 
+/* Collects one row's text, ignoring the row number the callback repeats. */
+static void collect_row(void* user, uint16_t row, uint16_t column, const shitty_vt_cell* cell) {
+    struct grid* const target = (struct grid*)user;
+    (void)row;
+    collect_cell(user, 0, column, cell);
+    (void)target;
+}
+
 int main(int argc, char** argv) {
     uint16_t columns = 80;
     uint16_t rows = 24;
@@ -85,6 +93,7 @@ int main(int argc, char** argv) {
     const char* path = NULL;
     int scroll = 0;
     long scroll_to = -1;
+    int dump_rows = 0;
     if (argc >= 4) {
         columns = (uint16_t)atoi(argv[1]);
         rows = (uint16_t)atoi(argv[2]);
@@ -95,6 +104,8 @@ int main(int argc, char** argv) {
         /* An absolute offset to settle on afterwards; negative leaves the
          * view where the relative scroll put it. */
         scroll_to = argc >= 7 ? atol(argv[6]) : -1;
+        /* Print every addressable row, history first, after the grid. */
+        dump_rows = argc >= 8 ? atoi(argv[7]) : 0;
     } else if (argc == 2) {
         path = argv[1];
     }
@@ -179,7 +190,34 @@ int main(int argc, char** argv) {
         fputc('\n', stdout);
     }
 
-    printf("scrollback: offset=%u history=%u\n", shitty_vt_scroll_offset(vt), shitty_vt_history_rows(vt));
+    printf("scrollback: offset=%u history=%u total=%u\n", shitty_vt_scroll_offset(vt), shitty_vt_history_rows(vt), shitty_vt_total_rows(vt));
+
+    if (dump_rows) {
+        const uint32_t total = shitty_vt_total_rows(vt);
+        uint32_t index;
+        struct grid one;
+        one.columns = columns;
+        one.rows = 1;
+        one.text = calloc(columns, CELL_TEXT_CAP);
+        if (one.text == NULL) {
+            shitty_vt_free(vt);
+            return 1;
+        }
+        for (index = 0; index < total; ++index) {
+            uint16_t column;
+            for (column = 0; column < columns; ++column) {
+                one.text[column * CELL_TEXT_CAP] = ' ';
+                one.text[column * CELL_TEXT_CAP + 1] = '\0';
+            }
+            shitty_vt_row_cells(vt, index, collect_row, &one);
+            printf("row %u:", index);
+            for (column = 0; column < columns; ++column) {
+                fputs(one.text + column * CELL_TEXT_CAP, stdout);
+            }
+            fputc('\n', stdout);
+        }
+        free(one.text);
+    }
 
     shitty_vt_free(vt);
     return 0;

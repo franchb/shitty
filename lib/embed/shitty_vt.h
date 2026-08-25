@@ -132,6 +132,18 @@ extern "C" {
     /* Rows of scrollback retained, which is the largest offset
      * shitty_vt_scroll_to will accept. */
     uint32_t shitty_vt_history_rows(const shitty_vt*);
+
+    /* Rows addressable through shitty_vt_row_cells: the retained history
+ * followed by the visible grid. Index 0 is the oldest row still kept and
+ * the last index is the bottom of the live screen. */
+    uint32_t shitty_vt_total_rows(const shitty_vt*);
+
+    /* Walks one row by absolute index, oldest first, leaving the view
+ * where it is - the row argument handed to the callback is the index
+ * asked for. An index past the last row visits nothing. Use this to read
+ * the scrollback without scrolling; use shitty_vt_each_cell to read what
+ * the user is looking at. */
+    void shitty_vt_row_cells(shitty_vt*, uint32_t index, shitty_vt_cell_fn, void* user);
     shitty_vt_cursor shitty_vt_cursor_state(const shitty_vt*);
     uint32_t shitty_vt_modes(const shitty_vt*);
 

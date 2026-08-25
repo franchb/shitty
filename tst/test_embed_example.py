@@ -33,10 +33,18 @@ class ExampleResult:
     replies: bytes
     scroll_offset: int
     history_rows: int
+    total_rows: int
+    rows_by_index: list[str]
 
 
 def run_example(
-    stream, columns=COLUMNS, rows=ROWS, save_lines=0, scroll=0, scroll_to=-1
+    stream,
+    columns=COLUMNS,
+    rows=ROWS,
+    save_lines=0,
+    scroll=0,
+    scroll_to=-1,
+    dump_rows=0,
 ):
     with tempfile.NamedTemporaryFile() as recorded:
         recorded.write(stream)
@@ -50,6 +58,7 @@ def run_example(
                 recorded.name,
                 str(scroll),
                 str(scroll_to),
+                str(dump_rows),
             ],
             capture_output=True,
             timeout=60,
@@ -61,6 +70,9 @@ def run_example(
     lines = result.stdout.decode("utf-8").split("\n")
     if lines and lines[-1] == "":
         lines.pop()
+    rows_by_index = []
+    while lines and lines[-1].startswith("row "):
+        rows_by_index.insert(0, lines.pop())
     scrollback_line = lines.pop()
     replies_line = lines.pop()
     modes_line = lines.pop()
@@ -78,6 +90,7 @@ def run_example(
     cursor_fields = cursor_line[len("cursor: ") :].split()
     replies = bytes.fromhex(replies_line[len("replies:") :].replace(" ", ""))
     scrollback_fields = scrollback_line[len("scrollback: ") :].split()
+    indexed = [line.split(":", 1)[1] for line in rows_by_index]
     return ExampleResult(
         events=events,
         lines=grid,
@@ -88,6 +101,8 @@ def run_example(
         replies=replies,
         scroll_offset=int(scrollback_fields[0].removeprefix("offset=")),
         history_rows=int(scrollback_fields[1].removeprefix("history=")),
+        total_rows=int(scrollback_fields[2].removeprefix("total=")),
+        rows_by_index=indexed,
     )
 
 
@@ -420,4 +435,46 @@ class ScrollbackTest(unittest.TestCase):
         result = run_example(self.stream(10), save_lines=100, scroll_to=99)
         self.assertEqual(result.scroll_offset, 5)
         self.assertEqual(result.lines[0].rstrip(), "line0")
+
+
+class HistoryRowTest(unittest.TestCase):
+    """Reading rows by index, which must not depend on where the view sits."""
+
+    @staticmethod
+    def stream(count):
+        return "".join(f"line{index}\r\n" for index in range(count)).encode()
+
+    def test_every_retained_row_is_addressable_oldest_first(self):
+        result = run_example(self.stream(10), save_lines=100, dump_rows=1)
+        # Five scrolled off, six on screen; the last is the blank row the
+        # trailing newline opened.
+        self.assertEqual(result.total_rows, 11)
+        self.assertEqual(len(result.rows_by_index), 11)
+        self.assertEqual(
+            [row.rstrip() for row in result.rows_by_index[:6]],
+            ["line0", "line1", "line2", "line3", "line4", "line5"],
+        )
+        self.assertEqual(result.rows_by_index[10].strip(), "")
+
+    def test_row_reads_ignore_the_view_position(self):
+        live = run_example(self.stream(10), save_lines=100, dump_rows=1)
+        scrolled = run_example(
+            self.stream(10), save_lines=100, scroll=3, dump_rows=1
+        )
+        self.assertEqual(scrolled.scroll_offset, 3)
+        self.assertEqual(scrolled.rows_by_index, live.rows_by_index)
+
+    def test_a_terminal_without_history_addresses_only_the_grid(self):
+        result = run_example(self.stream(10), save_lines=0, dump_rows=1)
+        self.assertEqual(result.total_rows, ROWS)
+        self.assertEqual(result.rows_by_index[0].rstrip(), "line5")
+
+    def test_reading_past_the_last_row_yields_nothing(self):
+        # The example only walks in range, so drive the edge through a
+        # terminal whose history is capped: index total-1 is the last row
+        # and the dump stops there rather than running on.
+        result = run_example(self.stream(40), save_lines=3, dump_rows=1)
+        self.assertEqual(result.total_rows, 3 + ROWS)
+        self.assertEqual(len(result.rows_by_index), 3 + ROWS)
+        self.assertEqual(result.rows_by_index[0].rstrip(), "line32")
 
