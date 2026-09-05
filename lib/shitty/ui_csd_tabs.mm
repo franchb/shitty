@@ -29,6 +29,7 @@
 #undef Point
 
 #include <stdio.h>
+#include <objc/message.h>
 
 using namespace stl;
 
@@ -210,10 +211,13 @@ static const CGFloat csdTabInset = 5;
 // notch reads as one curve going in and coming back out.
 static const CGFloat csdTabRadius = 5;
 static const CGFloat csdTabFillet = 5;
-// The radius the window's bottom corners are rounded with when the
-// window's frame does not say - and it does not: its layer reports
-// none. Ten points, measured off the window's own border arc at 2x.
-static const CGFloat csdWindowCornerFallback = 10;
+// The radius the window's bottom corners are rounded with when neither
+// the frame's layer nor its private accessor says. Before Big Sur the
+// bottom corners were square; from Big Sur through Sequoia they round
+// by ten points, measured off the window's own border arc at 2x. The
+// Tahoe figure is a reading of its larger corners, not a measurement.
+static const CGFloat csdWindowCornerBigSur = 10;
+static const CGFloat csdWindowCornerTahoe = 16;
 // The widest material rim the well keeps between the window edge and
 // its shade line; the terminal's border must leave room for it, which
 // the macOS default border does.
@@ -329,13 +333,31 @@ bool CsdTabsUi::lipVisible() const {
     return composer.opts->border >= 1;
 }
 
-// The frame view rounds the window's corners through its layer; read
-// the radius there rather than guessing which release draws which.
+// The radius the window rounds its bottom corners with. Asked of the
+// frame first: its layer's corner radius, then the private accessor
+// AppKit keeps on the frame and the window, reached only when they
+// answer to it. Failing all that, the release's known figure.
 CGFloat CsdTabsUi::windowCornerRadius() const {
     NSWindow* const window = nativeWindow();
     NSView* const frame = window.contentView.superview;
-    const CGFloat radius = frame.layer.cornerRadius;
-    return radius > 0 ? radius : csdWindowCornerFallback;
+    const CGFloat layerRadius = frame.layer.cornerRadius;
+    if (layerRadius > 0) {
+        return layerRadius;
+    }
+    const SEL accessor = NSSelectorFromString(@"_cornerRadius");
+    for (id candidate in @[ frame, window ]) {
+        if ([candidate respondsToSelector:accessor]) {
+            const CGFloat radius = ((CGFloat(*)(id, SEL))(objc_msgSend))(candidate, accessor);
+            if (radius > 0) {
+                return radius;
+            }
+        }
+    }
+    const NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
+    if (version.majorVersion < 11) {
+        return 0;
+    }
+    return version.majorVersion >= 26 ? csdWindowCornerTahoe : csdWindowCornerBigSur;
 }
 
 void CsdTabsUi::project() {
@@ -402,17 +424,29 @@ void CsdTabsUi::apply() {
         return;
     }
     NSButton* const zoom = [window standardWindowButton:NSWindowZoomButton];
-    NSView* const titlebar = zoom != nil ? zoom.superview : nil;
-    if (titlebar == nil) {
+    NSView* titlebar = zoom != nil ? zoom.superview : nil;
+    // The strip wants a view spanning the whole title bar. The zoom
+    // button's parent is that view on the releases seen so far; should
+    // a release keep the buttons in a narrower box of their own, climb
+    // until the view is as wide as the window, stopping short of the
+    // frame itself.
+    NSView* const frameView = window.contentView.superview;
+    while (titlebar != nil && titlebar.superview != frameView && titlebar.bounds.size.width < window.contentView.bounds.size.width) {
+        titlebar = titlebar.superview;
+    }
+    if (titlebar == nil || titlebar == frameView) {
         if (composer.opts->vt.verbose) {
             fprintf(stderr, "%s: tabs: no titlebar container to draw into\n", composer.brand->identifierCString());
         }
         return;
     }
+    // Only a direct child of the title bar can order the strip below the
+    // buttons; from a wider ancestor the strip goes in at the bottom.
+    NSView* const buttons = zoom.superview == titlebar ? zoom : nil;
     // The gap before the first tab keeps dragging the window natively,
     // double-click zoom included: it belongs to the seam view, which
     // lets the window move; the tab strip does not.
-    tabsLeft = NSMaxX(zoom.frame) + 56;
+    tabsLeft = NSMaxX([zoom.superview convertRect:zoom.frame toView:titlebar]) + 56;
     // Both views reach one point below the title bar, over the
     // content's top point: whatever the content view's own layers put
     // there, its top device row does not show translucent or vibrant
@@ -430,8 +464,8 @@ void CsdTabsUi::apply() {
         bar->owner = this;
         // Below the traffic lights: the seam runs under them, the
         // buttons stay on top.
-        [titlebar addSubview:seam positioned:NSWindowBelow relativeTo:zoom];
-        [titlebar addSubview:bar positioned:NSWindowBelow relativeTo:zoom];
+        [titlebar addSubview:seam positioned:NSWindowBelow relativeTo:buttons];
+        [titlebar addSubview:bar positioned:NSWindowBelow relativeTo:buttons];
         window.titleVisibility = NSWindowTitleHidden;
         // The frame draws a shadow under the title bar onto the content's
         // top device rows, black at the first and a quarter at the
@@ -488,7 +522,7 @@ void CsdTabsUi::logGeometry(NSWindow* window) const {
     const NSRect frame = window.frame;
     const NSRect content = window.contentView.frame;
     const NSRect layout = window.contentLayoutRect;
-    fprintf(stderr, "%s: tabs: window frame=(%g,%g %gx%g) scale=%g content frame=(%g,%g %gx%g) contentLayoutRect=(%g,%g %gx%g) border=%u bezel=%g cornerRadius=%g (frame layer %g)\n", prefix, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, window.backingScaleFactor, content.origin.x, content.origin.y, content.size.width, content.size.height, layout.origin.x, layout.origin.y, layout.size.width, layout.size.height, (unsigned)(composer.opts->border), bezelWidth(), windowCornerRadius(), window.contentView.superview.layer.cornerRadius);
+    fprintf(stderr, "%s: tabs: window frame=(%g,%g %gx%g) scale=%g content frame=(%g,%g %gx%g) contentLayoutRect=(%g,%g %gx%g) border=%u bezel=%g cornerRadius=%g (frame layer %g) macOS %ld.%ld\n", prefix, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, window.backingScaleFactor, content.origin.x, content.origin.y, content.size.width, content.size.height, layout.origin.x, layout.origin.y, layout.size.width, layout.size.height, (unsigned)(composer.opts->border), bezelWidth(), windowCornerRadius(), window.contentView.superview.layer.cornerRadius, (long)(NSProcessInfo.processInfo.operatingSystemVersion.majorVersion), (long)(NSProcessInfo.processInfo.operatingSystemVersion.minorVersion));
     NSView* titlebar = bar.superview;
     NSView* root = titlebar;
     while (root.superview != nil && root.superview != window.contentView.superview) {
@@ -1032,6 +1066,9 @@ namespace {
     const WellStyle colors = owner->style(self.effectiveAppearance);
     const CGFloat bezel = owner->bezelWidth();
     const CGFloat radius = owner->windowCornerRadius();
+    if (radius <= 0) {
+        return;
+    }
     // The window's corner circle, seen from this view: its center is
     // inset by the radius from the two outer edges.
     const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
