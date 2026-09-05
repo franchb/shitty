@@ -206,6 +206,24 @@ extern "C" {
      * the scrollback without scrolling; use shitty_vt_each_cell to read what
      * the user is looking at. */
     void shitty_vt_row_cells(shitty_vt*, uint32_t index, shitty_vt_cell_fn, void* user);
+
+    /* Where a row's text stops because it wrapped onto the next one: the
+     * columns that belong to the row, or 0 if it ends on its own. Indexed
+     * like shitty_vt_row_cells, and an index past the last row reports 0.
+     *
+     * An embedder that keeps its own scrollback needs this to tell one
+     * logical line from two. Without it a line the terminal wrapped comes
+     * back split at whatever width it happened to be written at, which is
+     * wrong for anything that reads the text again - a search, a copy, or
+     * handing a command's output to something else.
+     *
+     * It is a length rather than a flag because the terminal wraps
+     * wherever it ran out of room, which is not always the last column: a
+     * double-width character that does not fit leaves the one before it
+     * empty. Rejoining takes exactly this many columns and none of the
+     * blanks after them. Asking only whether the row continues is a
+     * comparison against 0. */
+    uint16_t shitty_vt_row_wrap_length(const shitty_vt*, uint32_t index);
     shitty_vt_cursor shitty_vt_cursor_state(const shitty_vt*);
     uint32_t shitty_vt_modes(const shitty_vt*);
 

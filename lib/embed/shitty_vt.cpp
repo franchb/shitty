@@ -666,6 +666,35 @@ void shitty_vt_row_cells(shitty_vt* vt, uint32_t index, shitty_vt_cell_fn fn, vo
     vt->terminal->consume();
 }
 
+uint16_t shitty_vt_row_wrap_length(const shitty_vt* vt, uint32_t index) {
+    const TerminalUpdate* update = currentUpdate(const_cast<shitty_vt*>(vt));
+    if (update == nullptr || update->shapes == nullptr) {
+        return 0;
+    }
+    Screen* const screen = update->shapes;
+    const ScreenInfo info = screen->info();
+    if (index >= info.historyRows + info.rows) {
+        return 0;
+    }
+    // The same index arithmetic shitty_vt_row_cells does, so the two agree
+    // on which row an index names wherever the view happens to sit.
+    const i32 logical = (i32)(index) - (i32)(info.historyRows);
+    const i32 view = logical + (i32)(info.viewOffset);
+    const ScreenRowRef source = screen->viewRow(view);
+    if (source.cells == nullptr) {
+        return 0;
+    }
+    // The wrap bit marks the cell the row ran out of room at, so the text
+    // is everything up to and including it. Taking the first one set is
+    // what the model itself does when it measures a row this way.
+    for (u16 column = 0; column < info.columns; ++column) {
+        if (source.cells[column].wrap) {
+            return (u16)(column + 1);
+        }
+    }
+    return 0;
+}
+
 void shitty_vt_memory_usage(const shitty_vt* vt, shitty_vt_memory* out) {
     if (out == nullptr) {
         return;
