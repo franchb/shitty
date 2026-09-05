@@ -151,6 +151,7 @@ namespace {
         void restyle();
         void logGeometry(NSWindow* window) const;
         CGFloat windowCornerRadius() const;
+        static NSImage* cornerRimMask(CGFloat radius, CGFloat bezel, bool trailing);
 
         Composer& composer;
         CallSessionsChanged sessionsChanged{this};
@@ -177,6 +178,7 @@ namespace {
         CsdBezelView* cornerMaterial[2] = {};
         CsdWellCornerView* wellCorners[2] = {};
         CsdCornerView* corners[2] = {};
+        CsdBezelView* cornerRim[2] = {};
     };
 
     static bool csdDarkAppearance(NSAppearance* appearance);
@@ -298,6 +300,22 @@ CGFloat CsdTabsUi::bezelWidth() const {
 
 bool CsdTabsUi::lipVisible() const {
     return composer.opts->border >= 1;
+}
+
+// The ring between the window's corner arc and the well's, as a mask
+// for the corner's material: the square minus the disc of the well's
+// radius around the corner circle's center. Even-odd does the cut.
+NSImage* CsdTabsUi::cornerRimMask(CGFloat radius, CGFloat bezel, bool trailing) {
+    const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
+    const CGFloat inner = radius - bezel;
+    return [NSImage imageWithSize:NSMakeSize(radius, radius) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+      NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:rect];
+      [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
+      ring.windingRule = NSEvenOddWindingRule;
+      [NSColor.whiteColor setFill];
+      [ring fill];
+      return YES;
+    }];
 }
 
 // The frame view rounds the window's corners through its layer; read
@@ -504,6 +522,14 @@ void CsdTabsUi::installBezel(NSWindow* window) {
     }
     if (lip || bezel >= 1) {
         for (size_t at = 0; at < 2; ++at) {
+            // The strips are rectangles along the edges; around the
+            // window's rounded corner the rim swings farther in than
+            // they reach, so the corner gets material of its own, cut
+            // to the ring between the window's arc and the well's.
+            if (bezel >= 1) {
+                cornerRim[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
+                add(cornerRim[at]);
+            }
             corners[at] = [[CsdCornerView alloc] initWithFrame:NSZeroRect];
             corners[at]->owner = this;
             corners[at]->trailing = at == 1;
@@ -543,6 +569,7 @@ void CsdTabsUi::removeBezel() {
         cornerMaterial[at] = nil;
         wellCorners[at] = nil;
         corners[at] = nil;
+        cornerRim[at] = nil;
     }
 }
 
@@ -567,6 +594,12 @@ void CsdTabsUi::placeBezel() {
         corners[1].frame = NSMakeRect(width - radius, 0, radius, radius);
         corners[0].needsDisplay = YES;
         corners[1].needsDisplay = YES;
+        if (cornerRim[0] != nil) {
+            for (size_t at = 0; at < 2; ++at) {
+                cornerRim[at].frame = corners[at].frame;
+                cornerRim[at].maskImage = cornerRimMask(radius, bezel, at == 1);
+            }
+        }
     }
     if (strips[0] != nil) {
         strips[0].frame = NSMakeRect(0, 0, bezel, height);
@@ -958,6 +991,16 @@ void CsdTabsUi::tabOpened() {
     const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
     const CGFloat startAngle = trailing ? 270 : 180;
     const CGFloat endAngle = startAngle + 90;
+    // The corner's material wears the plate's lift like the strips do,
+    // over the same ring its mask cuts.
+    if (bezel >= 1) {
+        const CGFloat inner = radius - bezel;
+        NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:self.bounds];
+        [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
+        ring.windingRule = NSEvenOddWindingRule;
+        [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
+        [ring fill];
+    }
     // The same lines as along the edges, at the same distances from
     // the window edge, bent around the corner circle.
     const auto drawLine = [&](CGFloat distance, NSColor* color) {
