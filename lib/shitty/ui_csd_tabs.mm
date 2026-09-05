@@ -86,6 +86,17 @@ namespace {
 @interface CsdBezelView: NSVisualEffectView
 @end
 
+// One bottom corner of the window: bends the edging lines around the
+// window's own corner radius, where straight lines would be cut by the
+// window's corner mask and cross its edge.
+@interface CsdCornerView: NSView {
+@public
+    CsdTabsUi* owner;
+@public
+    BOOL trailing;
+}
+@end
+
 // One top corner of the well, where the rim meets the title bar: the
 // well's edge rounds off there, and this view paints the quarter of the
 // terminal's background inside the curve, the lifted material outside
@@ -139,6 +150,7 @@ namespace {
         void placeBezel();
         void restyle();
         void logGeometry(NSWindow* window) const;
+        CGFloat windowCornerRadius() const;
 
         Composer& composer;
         CallSessionsChanged sessionsChanged{this};
@@ -164,6 +176,7 @@ namespace {
         CsdHairlineView* seamLines[2] = {};
         CsdBezelView* cornerMaterial[2] = {};
         CsdWellCornerView* wellCorners[2] = {};
+        CsdCornerView* corners[2] = {};
     };
 
     static bool csdDarkAppearance(NSAppearance* appearance);
@@ -180,6 +193,9 @@ static const CGFloat csdTabCloseZone = 24;
 static const CGFloat csdTabInset = 5;
 static const CGFloat csdTabRadius = 7;
 static const CGFloat csdTabFillet = 5;
+// The radius the window's bottom corners are rounded with when the
+// window's frame does not say: what current releases use.
+static const CGFloat csdWindowCornerFallback = 12;
 // The widest material rim the well keeps between the window edge and
 // its shade line; the terminal's border must leave room for it, which
 // the macOS default border does.
@@ -281,6 +297,15 @@ CGFloat CsdTabsUi::bezelWidth() const {
 
 bool CsdTabsUi::lipVisible() const {
     return composer.opts->border >= 1;
+}
+
+// The frame view rounds the window's corners through its layer; read
+// the radius there rather than guessing which release draws which.
+CGFloat CsdTabsUi::windowCornerRadius() const {
+    NSWindow* const window = nativeWindow();
+    NSView* const frame = window.contentView.superview;
+    const CGFloat radius = frame.layer.cornerRadius;
+    return radius > 0 ? radius : csdWindowCornerFallback;
 }
 
 void CsdTabsUi::project() {
@@ -408,7 +433,7 @@ void CsdTabsUi::logGeometry(NSWindow* window) const {
     const NSRect frame = window.frame;
     const NSRect content = window.contentView.frame;
     const NSRect layout = window.contentLayoutRect;
-    fprintf(stderr, "%s: tabs: window frame=(%g,%g %gx%g) scale=%g content frame=(%g,%g %gx%g) contentLayoutRect=(%g,%g %gx%g) border=%u bezel=%g\n", prefix, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, window.backingScaleFactor, content.origin.x, content.origin.y, content.size.width, content.size.height, layout.origin.x, layout.origin.y, layout.size.width, layout.size.height, (unsigned)(composer.opts->border), bezelWidth());
+    fprintf(stderr, "%s: tabs: window frame=(%g,%g %gx%g) scale=%g content frame=(%g,%g %gx%g) contentLayoutRect=(%g,%g %gx%g) border=%u bezel=%g cornerRadius=%g (frame layer %g)\n", prefix, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, window.backingScaleFactor, content.origin.x, content.origin.y, content.size.width, content.size.height, layout.origin.x, layout.origin.y, layout.size.width, layout.size.height, (unsigned)(composer.opts->border), bezelWidth(), windowCornerRadius(), window.contentView.superview.layer.cornerRadius);
     NSView* titlebar = bar.superview;
     NSView* root = titlebar;
     while (root.superview != nil && root.superview != window.contentView.superview) {
@@ -476,6 +501,14 @@ void CsdTabsUi::installBezel(NSWindow* window) {
             add(wellCorners[at]);
         }
     }
+    if (lip || bezel >= 1) {
+        for (size_t at = 0; at < 2; ++at) {
+            corners[at] = [[CsdCornerView alloc] initWithFrame:NSZeroRect];
+            corners[at]->owner = this;
+            corners[at]->trailing = at == 1;
+            add(corners[at]);
+        }
+    }
     // The seam lines end where the active tab flares out, which moves
     // with the window width; every other frame is replaced along with
     // them, in the same transaction as the content view's own resize.
@@ -508,6 +541,7 @@ void CsdTabsUi::removeBezel() {
         seamLines[at] = nil;
         cornerMaterial[at] = nil;
         wellCorners[at] = nil;
+        corners[at] = nil;
     }
 }
 
@@ -524,7 +558,15 @@ void CsdTabsUi::placeBezel() {
     // the side lines stop under the curve and the corner views take
     // over. Without one the lines run straight up to the seam.
     const CGFloat corner = strips[0] != nil ? csdTabFillet : 0;
-    const CGFloat rise = height > corner ? height - corner : 0;
+    const CGFloat radius = corners[0] != nil ? windowCornerRadius() : 0;
+    const CGFloat rise = height > corner + radius ? height - corner - radius : 0;
+    const CGFloat span = width > 2 * radius ? width - 2 * radius : 0;
+    if (corners[0] != nil) {
+        corners[0].frame = NSMakeRect(0, 0, radius, radius);
+        corners[1].frame = NSMakeRect(width - radius, 0, radius, radius);
+        corners[0].needsDisplay = YES;
+        corners[1].needsDisplay = YES;
+    }
     if (strips[0] != nil) {
         strips[0].frame = NSMakeRect(0, 0, bezel, height);
         strips[1].frame = NSMakeRect(width - bezel, 0, bezel, height);
@@ -532,28 +574,28 @@ void CsdTabsUi::placeBezel() {
         for (size_t side = 0; side < 3; ++side) {
             lifts[side].frame = strips[side].frame;
         }
-        cornerMaterial[0].frame = NSMakeRect(bezel, rise, corner, corner);
-        cornerMaterial[1].frame = NSMakeRect(width - bezel - corner, rise, corner, corner);
-        wellCorners[0].frame = NSMakeRect(0, rise, bezel + corner, corner);
-        wellCorners[1].frame = NSMakeRect(width - bezel - corner, rise, bezel + corner, corner);
+        const CGFloat top = height > corner ? height - corner : 0;
+        cornerMaterial[0].frame = NSMakeRect(bezel, top, corner, corner);
+        cornerMaterial[1].frame = NSMakeRect(width - bezel - corner, top, corner, corner);
+        wellCorners[0].frame = NSMakeRect(0, top, bezel + corner, corner);
+        wellCorners[1].frame = NSMakeRect(width - bezel - corner, top, bezel + corner, corner);
         wellCorners[0].needsDisplay = YES;
         wellCorners[1].needsDisplay = YES;
     }
     // Line 0 is the lip on the terminal's own border, line 1 the shade
     // at the rim's inner edge, line 2 the glow beside it: each one point
-    // further out from the well. They run straight into the corners;
-    // the window's own corner mask trims them the way it trims the
-    // window's edge, whatever radius this release rounds with.
+    // further out from the well. They stop short of the window's bottom
+    // corners, where the corner views bend them around the radius.
     for (size_t line = 0; line < 3; ++line) {
         const CGFloat distance = bezel - (CGFloat)(line);
         if (sideLines[0][line] != nil) {
-            sideLines[0][line].frame = NSMakeRect(distance, 0, 1, rise);
+            sideLines[0][line].frame = NSMakeRect(distance, radius, 1, rise);
         }
         if (sideLines[1][line] != nil) {
-            sideLines[1][line].frame = NSMakeRect(width - distance - 1, 0, 1, rise);
+            sideLines[1][line].frame = NSMakeRect(width - distance - 1, radius, 1, rise);
         }
         if (sideLines[2][line] != nil) {
-            sideLines[2][line].frame = NSMakeRect(0, distance, width, 1);
+            sideLines[2][line].frame = NSMakeRect(radius, distance, span, 1);
         }
     }
     if (seamLines[0] != nil) {
@@ -591,6 +633,9 @@ void CsdTabsUi::restyle() {
         }
         if (wellCorners[at] != nil) {
             wellCorners[at].needsDisplay = YES;
+        }
+        if (corners[at] != nil) {
+            corners[at].needsDisplay = YES;
         }
     }
     if (bar != nil) {
@@ -890,6 +935,50 @@ void CsdTabsUi::tabOpened() {
 - (NSView*)hitTest:(NSPoint)point {
     (void)point;
     return nil;
+}
+
+@end
+
+@implementation CsdCornerView
+
+- (NSView*)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    NSRectClip(self.bounds);
+    const WellStyle colors = owner->style(self.effectiveAppearance);
+    const CGFloat bezel = owner->bezelWidth();
+    const CGFloat radius = owner->windowCornerRadius();
+    // The window's corner circle, seen from this view: its center is
+    // inset by the radius from the two outer edges.
+    const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
+    const CGFloat startAngle = trailing ? 270 : 180;
+    const CGFloat endAngle = startAngle + 90;
+    // The same lines as along the edges, at the same distances from
+    // the window edge, bent around the corner circle.
+    const auto drawLine = [&](CGFloat distance, NSColor* color) {
+        const CGFloat lineRadius = radius - distance - 0.5;
+        if (lineRadius <= 0) {
+            return;
+        }
+        NSBezierPath* const arc = [NSBezierPath bezierPath];
+        [arc appendBezierPathWithArcWithCenter:center radius:lineRadius startAngle:startAngle endAngle:endAngle clockwise:NO];
+        arc.lineWidth = 1;
+        [color setStroke];
+        [arc stroke];
+    };
+    if (bezel >= 2) {
+        drawLine(bezel - 2, colors.glow);
+    }
+    if (bezel >= 1) {
+        drawLine(bezel - 1, colors.shade);
+    }
+    if (owner->lipVisible()) {
+        drawLine(bezel, colors.lip);
+    }
 }
 
 @end
