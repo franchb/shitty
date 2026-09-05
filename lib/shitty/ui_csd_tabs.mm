@@ -29,7 +29,6 @@
 #undef Point
 
 #include <stdio.h>
-#include <stdlib.h>
 
 using namespace stl;
 
@@ -168,16 +167,6 @@ namespace {
         CallConfigChanged configChanged{this};
         CsdTabBarView* bar = nil;
         CsdSeamView* seam = nil;
-        // AppKit's own decoration over the title bar, hidden while the
-        // strip shows: it keeps drawing a hairline separator under the
-        // title bar whatever titlebarSeparatorStyle says, on its own
-        // redraw schedule - gone when the window loses key status, back
-        // on hover - and that line cuts the well's rim off the plate.
-        NSView* decoration = nil;
-        // The bare NSView AppKit keeps under the title bar's own views:
-        // it paints past its bottom edge onto the content's top row on
-        // its own schedule, the same hairline. Hidden alongside.
-        NSView* separator = nil;
         // The projected model snapshot the view draws from; nil hides
         // the strip (a lone session keeps the clean native title).
         NSArray<NSString*>* labels = nil;
@@ -195,12 +184,6 @@ namespace {
         CsdBezelView* strips[3] = {};
         CsdHairlineView* lifts[3] = {};
         CsdHairlineView* sideLines[3][3] = {};
-        CsdHairlineView* seamLines[2] = {};
-        // SHITTY_TABS_PROBE=1: a red line over the content's top point,
-        // above every other layer of the rim, and a green background
-        // under the Metal layer. Tells whether a stray line at the seam
-        // is drawn above the rim or through a gap in it.
-        CsdHairlineView* probe = nil;
         CsdBezelView* cornerMaterial[2] = {};
         CsdWellCornerView* wellCorners[2] = {};
         CsdCornerView* corners[2] = {};
@@ -405,12 +388,6 @@ void CsdTabsUi::apply() {
             [seam removeFromSuperview];
             [seam release];
             seam = nil;
-            decoration.hidden = NO;
-            [decoration release];
-            decoration = nil;
-            separator.hidden = NO;
-            [separator release];
-            separator = nil;
             window.titleVisibility = NSWindowTitleVisible;
             if (@available(macOS 11.0, *)) {
                 window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleAutomatic;
@@ -430,9 +407,14 @@ void CsdTabsUi::apply() {
     // double-click zoom included: it belongs to the seam view, which
     // lets the window move; the tab strip does not.
     tabsLeft = NSMaxX(zoom.frame) + 56;
+    // Both views reach one point below the title bar, over the
+    // content's top point: whatever the content view's own layers put
+    // there, its top device row does not show translucent or vibrant
+    // material, only opaque paint. The title bar views draw over the
+    // content, so they paint that row themselves, opaquely.
     const NSRect bounds = titlebar.bounds;
-    const NSRect frame = NSMakeRect(tabsLeft, 0, bounds.size.width - tabsLeft, bounds.size.height);
-    const NSRect seamFrame = NSMakeRect(0, 0, tabsLeft, bounds.size.height);
+    const NSRect frame = NSMakeRect(tabsLeft, -1, bounds.size.width - tabsLeft, bounds.size.height + 1);
+    const NSRect seamFrame = NSMakeRect(0, -1, tabsLeft, bounds.size.height + 1);
     if (bar == nil) {
         seam = [[CsdSeamView alloc] initWithFrame:seamFrame];
         seam.autoresizingMask = NSViewMaxXMargin | NSViewHeightSizable;
@@ -451,26 +433,8 @@ void CsdTabsUi::apply() {
         if (@available(macOS 11.0, *)) {
             window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
         }
-        for (NSView* sibling in titlebar.superview.subviews) {
-            if ([sibling.className rangeOfString:@"TitlebarDecoration"].location != NSNotFound) {
-                decoration = [sibling retain];
-                decoration.hidden = YES;
-                break;
-            }
-        }
-        for (NSView* sibling in titlebar.subviews) {
-            if ([sibling.className isEqualToString:@"NSView"]) {
-                separator = [sibling retain];
-                if (composer.opts->vt.verbose) {
-                    CALayer* const layer = sibling.layer;
-                    fprintf(stderr, "%s: tabs: bare title bar view: layer %s shadowOpacity=%g shadowRadius=%g borderWidth=%g background=%s opaque=%d\n", composer.brand->identifierCString(), layer != nil ? "yes" : "no", layer != nil ? layer.shadowOpacity : 0.0, layer != nil ? layer.shadowRadius : 0.0, layer != nil ? layer.borderWidth : 0.0, layer != nil && layer.backgroundColor != nil ? "yes" : "no", (int)(sibling.opaque));
-                }
-                separator.hidden = YES;
-                break;
-            }
-        }
         if (composer.opts->vt.verbose) {
-            fprintf(stderr, "%s: tabs: strip installed over the title bar, decoration %s, bare view %s\n", composer.brand->identifierCString(), decoration != nil ? "hidden" : "not found", separator != nil ? "hidden" : "not found");
+            fprintf(stderr, "%s: tabs: strip installed over the title bar\n", composer.brand->identifierCString());
         }
     } else {
         bar.frame = frame;
@@ -564,18 +528,6 @@ void CsdTabsUi::installBezel(NSWindow* window) {
             add(sideLines[side][line]);
         }
     }
-    if (lip) {
-        for (size_t at = 0; at < 2; ++at) {
-            seamLines[at] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
-            add(seamLines[at]);
-        }
-    }
-    if (getenv("SHITTY_TABS_PROBE") != nullptr) {
-        probe = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
-        [probe setColor:[NSColor colorWithSRGBRed:1 green:0 blue:0 alpha:1]];
-        add(probe);
-        content.layer.backgroundColor = [NSColor colorWithSRGBRed:0 green:1 blue:0 alpha:1].CGColor;
-    }
     if (bezel >= 1) {
         for (size_t at = 0; at < 2; ++at) {
             cornerMaterial[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
@@ -631,8 +583,6 @@ void CsdTabsUi::removeBezel() {
         }
     }
     for (size_t at = 0; at < 2; ++at) {
-        seamLines[at] = nil;
-        probe = nil;
         cornerMaterial[at] = nil;
         wellCorners[at] = nil;
         corners[at] = nil;
@@ -699,24 +649,6 @@ void CsdTabsUi::placeBezel() {
             sideLines[2][line].frame = NSMakeRect(radius, distance, span, 1);
         }
     }
-    if (seamLines[0] != nil) {
-        const TabLayout tabs = layout(width);
-        const CGFloat begin = tabs.left + tabs.cellWidth * (CGFloat)(active) - tabs.fillet;
-        const CGFloat end = begin + tabs.cellWidth + 2 * tabs.fillet;
-        // The seam lip runs between the well's rounded top corners and
-        // the active tab's flares.
-        const CGFloat from = bezel + corner;
-        const CGFloat to = width - bezel - corner;
-        const CGFloat leading = begin > from ? begin - from : 0;
-        const CGFloat trailing = to > end ? to - end : 0;
-        seamLines[0].frame = NSMakeRect(from, height - 1, leading, 1);
-        seamLines[1].frame = NSMakeRect(end, height - 1, trailing, 1);
-    }
-    if (probe != nil) {
-        [probe removeFromSuperview];
-        [window.contentView addSubview:probe];
-        probe.frame = NSMakeRect(0, height - 1, width, 1);
-    }
 }
 
 void CsdTabsUi::restyle() {
@@ -734,9 +666,6 @@ void CsdTabsUi::restyle() {
         }
     }
     for (size_t at = 0; at < 2; ++at) {
-        if (seamLines[at] != nil) {
-            [seamLines[at] setColor:colors.lip];
-        }
         if (wellCorners[at] != nil) {
             wellCorners[at].needsDisplay = YES;
         }
@@ -838,12 +767,24 @@ namespace {
             [outline lineToPoint:NSMakePoint(width, 0)];
         }
         outline.lineJoinStyle = NSLineJoinStyleRound;
-        // The fill closes below the view's bottom edge, so it reaches the
-        // seam exactly and never covers the seam's own strokes.
+        // The fill closes below the seam, through the content's top
+        // point, so the notch continues straight into the terminal. With
+        // a rim the well's rounded top corners add their discs: the part
+        // of each inside the top point is well, too.
         NSBezierPath* const well = [[notch copy] autorelease];
         [well lineToPoint:NSMakePoint(right + fillet, -2)];
         [well lineToPoint:NSMakePoint(left - fillet, -2)];
         [well closePath];
+        if (corner > 0) {
+            [well appendBezierPathWithOvalInRect:NSMakeRect(bezel, -2 * corner, 2 * corner, 2 * corner)];
+            [well appendBezierPathWithOvalInRect:NSMakeRect(width - bezel - 2 * corner, -2 * corner, 2 * corner, 2 * corner)];
+        }
+        // The content's top point, painted opaquely: the plate's
+        // material as a flat color, which is what the rim and the
+        // corners hold there; the well and the seam lip go over it.
+        const bool dark = csdDarkAppearance(appearance);
+        [[NSColor colorWithSRGBRed:dark ? 55 / 255.0 : 236 / 255.0 green:dark ? 55 / 255.0 : 236 / 255.0 blue:dark ? 55 / 255.0 : 236 / 255.0 alpha:1.0] setFill];
+        NSRectFill(NSMakeRect(0, -1, width, 1));
         // The plate: the material lifted evenly, so the well is cut into
         // something visibly lighter than the terminal it holds.
         [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
@@ -865,6 +806,26 @@ namespace {
             [colors.lip setStroke];
             [outline stroke];
             [NSGraphicsContext restoreGraphicsState];
+        }
+        // The seam under the idle tabs, in the content's top point:
+        // terminal background with the lip on it, between the well's
+        // top corners and the active tab's flares.
+        const CGFloat from = bezel + corner;
+        const CGFloat to = width - bezel - corner;
+        const NSRect bands[2] = {
+            NSMakeRect(from, -1, left - fillet > from ? left - fillet - from : 0, 1),
+            NSMakeRect(right + fillet, -1, to > right + fillet ? to - right - fillet : 0, 1),
+        };
+        for (size_t at = 0; at < 2; ++at) {
+            if (bands[at].size.width <= 0) {
+                continue;
+            }
+            [colors.fill setFill];
+            NSRectFill(bands[at]);
+            if (owner->lipVisible()) {
+                [colors.lip setFill];
+                NSRectFillUsingOperation(bands[at], NSCompositingOperationSourceOver);
+            }
         }
     }
 }
@@ -892,12 +853,13 @@ namespace {
     if (count == 0) {
         return;
     }
-    // Title bar coordinates: this view starts at the first tab, the
-    // seam view covers the gap before it.
+    // Title bar coordinates, the seam at y = 0: this view starts at the
+    // first tab and one point below the seam; the seam view covers the
+    // gap before it.
     const CGFloat offset = self.frame.origin.x;
-    const NSRect bounds = NSMakeRect(0, 0, self.frame.size.width + offset, self.bounds.size.height);
+    const NSRect bounds = NSMakeRect(0, 0, self.frame.size.width + offset, self.bounds.size.height - 1);
     NSAffineTransform* const shift = [NSAffineTransform transform];
-    [shift translateXBy:-offset yBy:0];
+    [shift translateXBy:-offset yBy:1];
     [shift concat];
     csdDrawWell(owner, bounds, self.effectiveAppearance);
     const NSUInteger active = (NSUInteger)(owner->active);
@@ -1030,7 +992,10 @@ namespace {
     if (owner->labels.count == 0) {
         return;
     }
-    const NSRect titlebar = NSMakeRect(0, 0, self.superview.bounds.size.width, self.bounds.size.height);
+    const NSRect titlebar = NSMakeRect(0, 0, self.superview.bounds.size.width, self.bounds.size.height - 1);
+    NSAffineTransform* const shift = [NSAffineTransform transform];
+    [shift translateXBy:0 yBy:1];
+    [shift concat];
     csdDrawWell(owner, titlebar, self.effectiveAppearance);
 }
 
