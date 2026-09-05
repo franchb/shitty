@@ -47,6 +47,9 @@ class ExampleResult:
     # column -> (foreground, background, underline) provenance of every
     # drawn cell of the top row.
     colors: dict
+    # absolute row index -> columns that belong to the row before it wrapped
+    # onto the next, 0 for a row that ends on its own.
+    wrap: dict
 
 
 @dataclass
@@ -106,6 +109,7 @@ def run_example(
         rows_by_index.insert(0, lines.pop())
     preedit_line = lines.pop()
     memory_line = lines.pop()
+    wrap_line = lines.pop()
     scrollback_line = lines.pop()
     replies_line = lines.pop()
     colors_line = lines.pop()
@@ -119,6 +123,8 @@ def run_example(
         raise RuntimeError(f"unexpected colors line: {colors_line!r}")
     if not cursor_line.startswith("cursor: "):
         raise RuntimeError(f"unexpected cursor line: {cursor_line!r}")
+    if not wrap_line.startswith("wrap:"):
+        raise RuntimeError(f"unexpected wrap line: {wrap_line!r}")
     if not scrollback_line.startswith("scrollback: "):
         raise RuntimeError(f"unexpected scrollback line: {scrollback_line!r}")
     if not memory_line.startswith("memory: "):
@@ -138,6 +144,12 @@ def run_example(
         int(column): tuple(sources.split("/"))
         for column, sources in (
             field.split("=", 1) for field in colors_line[len("colors:") :].split()
+        )
+    }
+    wrap = {
+        int(index): int(length)
+        for index, length in (
+            field.split("=", 1) for field in wrap_line[len("wrap:") :].split()
         )
     }
     preedit = None
@@ -167,6 +179,7 @@ def run_example(
         cell_bytes=int(memory_fields["cell_bytes"]),
         preedit=preedit,
         colors=colors,
+        wrap=wrap,
     )
 
 
@@ -1041,6 +1054,132 @@ class CellColorSourceTest(unittest.TestCase):
         )
         self.assertEqual(result.colors[0][1], "direct")
         self.assertEqual(result.colors[1][1], "default_bg")
+
+
+class RowWrapTest(unittest.TestCase):
+    """Where a row's text stops because it wrapped onto the next one.
+
+    An embedder rejoining a wrapped line needs more than "this row is
+    continued": the wrap point is wherever the terminal ran out of room,
+    which is not always the last column, and the columns after it belong
+    to no one.
+    """
+
+    def test_a_row_that_wraps_reports_where_it_stopped(self):
+        # Twelve characters into eight columns: the first row is full and
+        # continues, the second holds the rest and ends on its own.
+        result = run_example(b"abcdefghijkl", columns=8, rows=3)
+
+        self.assertEqual(result.wrap[0], 8)
+        self.assertEqual(result.wrap[1], 0)
+
+    def test_a_row_ended_by_a_newline_does_not_wrap(self):
+        result = run_example(b"abc\r\ndef", columns=8, rows=3)
+
+        self.assertEqual(result.wrap[0], 0)
+        self.assertEqual(result.wrap[1], 0)
+
+    def test_a_blank_row_does_not_wrap(self):
+        result = run_example(b"ab", columns=8, rows=3)
+
+        self.assertEqual(result.wrap[0], 0)
+        self.assertEqual(result.wrap[2], 0)
+
+    def test_a_wide_character_wraps_before_the_last_column(self):
+        # Seven narrow cells then a double-width one, which does not fit in
+        # the last column of eight. The row is continued and yet its text
+        # ends at column 7, so a flag saying only "wrapped" would leave an
+        # embedder rejoining a column of nothing.
+        result = run_example("abcdefg\u4e00".encode(), columns=8, rows=3)
+
+        self.assertEqual(result.wrap[0], 7)
+        self.assertEqual(result.lines[1][0], "\u4e00")
+
+    def test_autowrap_off_clamps_instead_of_wrapping(self):
+        # DECAWM off: the row keeps overwriting its last column rather than
+        # continuing, so nothing was wrapped.
+        result = run_example(b"\x1b[?7labcdefghijkl", columns=8, rows=3)
+
+        self.assertEqual(result.wrap[0], 0)
+
+    def test_a_scrolled_off_row_keeps_its_wrap(self):
+        # The index space is the one shitty_vt_row_cells uses - the retained
+        # history followed by the live grid - so a wrapped line that has
+        # scrolled out of view still reports where it wrapped.
+        result = run_example(
+            b"abcdefghijkl\r\n" + b"x\r\n" * 4,
+            columns=8,
+            rows=3,
+            save_lines=8,
+        )
+
+        self.assertGreater(result.history_rows, 0)
+        self.assertEqual(result.wrap[0], 8)
+        self.assertEqual(result.wrap[1], 0)
+
+    def test_the_wrap_survives_a_scrolled_view(self):
+        # Reading a row is independent of where the user has scrolled, and
+        # so is reading where it wrapped.
+        result = run_example(
+            b"abcdefghijkl\r\n" + b"x\r\n" * 4,
+            columns=8,
+            rows=3,
+            save_lines=8,
+            scroll=2,
+        )
+
+        self.assertEqual(result.scroll_offset, 2)
+        self.assertEqual(result.wrap[0], 8)
+
+    def test_an_index_past_the_last_row_reports_no_wrap(self):
+        # The header promises 0 rather than a guess, and an embedder
+        # walking a scrollback that shrank under it will ask.
+        result = run_example(
+            b"abcdefghijkl",
+            columns=8,
+            rows=3,
+            input_script=["wrap 2", "wrap 3", "wrap 99"],
+        )
+
+        self.assertEqual(result.events, ["wrap 2: 0", "wrap 3: 0", "wrap 99: 0"])
+
+    def test_the_wrap_follows_a_reflow(self):
+        # Resizing re-lays the text, so where a row wraps belongs to the
+        # screen it is on now rather than to the width it was written at.
+        written = b"abcdefghijkl"
+
+        # Narrower: one wrapped line becomes two, both continued.
+        narrowed = run_example(written, columns=8, rows=3, input_script=["resize 4 3"])
+        self.assertEqual([narrowed.wrap[index] for index in range(3)], [4, 4, 0])
+
+        # Wider: it fits, so nothing wraps.
+        widened = run_example(written, columns=8, rows=3, input_script=["resize 16 3"])
+        self.assertEqual(widened.wrap[0], 0)
+
+        # And back, which also shows the text survived the widening
+        # rather than the wrap having simply been cleared.
+        restored = run_example(
+            written,
+            columns=8,
+            rows=3,
+            dump_rows=1,
+            input_script=["resize 16 3", "resize 8 3"],
+        )
+        self.assertEqual(restored.wrap[0], 8)
+        self.assertEqual(restored.rows_by_index[:2], ["abcdefgh", "ijkl    "])
+
+    def test_every_addressable_row_reports_a_wrap(self):
+        # The index space is exactly the one shitty_vt_row_cells uses: the
+        # retained history first, then the live grid, one answer per row.
+        # An embedder walking its scrollback needs the two to line up.
+        result = run_example(
+            b"abcdefghijkl\r\n" + b"x\r\n" * 4,
+            columns=8,
+            rows=3,
+            save_lines=8,
+        )
+
+        self.assertEqual(sorted(result.wrap), list(range(result.total_rows)))
 
 
 class DriverEdgeTest(unittest.TestCase):

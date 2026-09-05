@@ -221,6 +221,10 @@ static void run_input_line(shitty_vt* vt, const char* line) {
         shitty_vt_preedit(vt, bytes, used, begin, end);
     } else if (sscanf(line, "resize %u %u", &a, &b) == 2) {
         shitty_vt_resize(vt, (uint16_t)a, (uint16_t)b);
+    } else if (sscanf(line, "wrap %u", &a) == 1) {
+        /* Asks for one row by index, which the wrap line cannot do: it
+         * only walks the rows that exist. */
+        printf("wrap %u: %u\n", a, shitty_vt_row_wrap_length(vt, a));
     }
 }
 
@@ -365,6 +369,18 @@ int main(int argc, char** argv) {
     }
 
     printf("scrollback: offset=%u history=%u total=%u\n", shitty_vt_scroll_offset(vt), shitty_vt_history_rows(vt), shitty_vt_total_rows(vt));
+
+    {
+        /* Where every addressable row stops because it wrapped, history
+         * first, so a reader can rejoin the lines the terminal split. */
+        const uint32_t total = shitty_vt_total_rows(vt);
+        uint32_t index;
+        fputs("wrap:", stdout);
+        for (index = 0; index < total; ++index) {
+            printf(" %u=%u", index, shitty_vt_row_wrap_length(vt, index));
+        }
+        fputc('\n', stdout);
+    }
 
     {
         shitty_vt_memory memory;
