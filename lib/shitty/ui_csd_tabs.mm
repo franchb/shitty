@@ -29,6 +29,7 @@
 #undef Point
 
 #include <stdio.h>
+#include <stdlib.h>
 
 using namespace stl;
 
@@ -195,6 +196,11 @@ namespace {
         CsdHairlineView* lifts[3] = {};
         CsdHairlineView* sideLines[3][3] = {};
         CsdHairlineView* seamLines[2] = {};
+        // SHITTY_TABS_PROBE=1: a red line over the content's top point,
+        // above every other layer of the rim, and a green background
+        // under the Metal layer. Tells whether a stray line at the seam
+        // is drawn above the rim or through a gap in it.
+        CsdHairlineView* probe = nil;
         CsdBezelView* cornerMaterial[2] = {};
         CsdWellCornerView* wellCorners[2] = {};
         CsdCornerView* corners[2] = {};
@@ -564,6 +570,12 @@ void CsdTabsUi::installBezel(NSWindow* window) {
             add(seamLines[at]);
         }
     }
+    if (getenv("SHITTY_TABS_PROBE") != nullptr) {
+        probe = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
+        [probe setColor:[NSColor colorWithSRGBRed:1 green:0 blue:0 alpha:1]];
+        add(probe);
+        content.layer.backgroundColor = [NSColor colorWithSRGBRed:0 green:1 blue:0 alpha:1].CGColor;
+    }
     if (bezel >= 1) {
         for (size_t at = 0; at < 2; ++at) {
             cornerMaterial[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
@@ -620,6 +632,7 @@ void CsdTabsUi::removeBezel() {
     }
     for (size_t at = 0; at < 2; ++at) {
         seamLines[at] = nil;
+        probe = nil;
         cornerMaterial[at] = nil;
         wellCorners[at] = nil;
         corners[at] = nil;
@@ -698,6 +711,11 @@ void CsdTabsUi::placeBezel() {
         const CGFloat trailing = to > end ? to - end : 0;
         seamLines[0].frame = NSMakeRect(from, height - 1, leading, 1);
         seamLines[1].frame = NSMakeRect(end, height - 1, trailing, 1);
+    }
+    if (probe != nil) {
+        [probe removeFromSuperview];
+        [window.contentView addSubview:probe];
+        probe.frame = NSMakeRect(0, height - 1, width, 1);
     }
 }
 
