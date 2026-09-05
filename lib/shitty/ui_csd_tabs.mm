@@ -86,6 +86,18 @@ namespace {
 @interface CsdBezelView: NSVisualEffectView
 @end
 
+// One top corner of the well, where the rim meets the title bar: the
+// well's edge rounds off there, and this view paints the quarter of the
+// terminal's background inside the curve, the lifted material outside
+// it, and bends the edging lines around it.
+@interface CsdWellCornerView: NSView {
+@public
+    CsdTabsUi* owner;
+@public
+    BOOL trailing;
+}
+@end
+
 namespace {
     struct CallSessionsChanged final: public Listener {
         explicit CallSessionsChanged(CsdTabsUi* parent);
@@ -126,6 +138,7 @@ namespace {
         void removeBezel();
         void placeBezel();
         void restyle();
+        void logGeometry(NSWindow* window) const;
 
         Composer& composer;
         CallSessionsChanged sessionsChanged{this};
@@ -146,8 +159,11 @@ namespace {
         id frameObserver = nil;
         u16 bezelBorder = 0;
         CsdBezelView* strips[3] = {};
+        CsdHairlineView* lifts[3] = {};
         CsdHairlineView* sideLines[3][3] = {};
         CsdHairlineView* seamLines[2] = {};
+        CsdBezelView* cornerMaterial[2] = {};
+        CsdWellCornerView* wellCorners[2] = {};
     };
 
     static bool csdDarkAppearance(NSAppearance* appearance);
@@ -365,6 +381,46 @@ void CsdTabsUi::apply() {
     restyle();
     placeBezel();
     bar.needsDisplay = YES;
+    if (composer.opts->vt.verbose) {
+        logGeometry(window);
+    }
+}
+
+namespace {
+    static void csdLogSubtree(const char* prefix, NSView* view, int depth) {
+        const NSRect frame = view.frame;
+        const NSRect bounds = view.bounds;
+        fprintf(stderr, "%s: tabs: %*s%s frame=(%g,%g %gx%g) bounds=(%g,%g %gx%g)%s\n", prefix, depth * 2, "", view.className.UTF8String, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height, view.hidden ? " hidden" : "");
+        if (depth >= 3) {
+            return;
+        }
+        for (NSView* child in view.subviews) {
+            csdLogSubtree(prefix, child, depth + 1);
+        }
+    }
+}
+
+// Everything the seam depends on, for a bug report from a machine this
+// code cannot be run on: where the title bar, its container and the
+// content view actually sit, and what AppKit put between them.
+void CsdTabsUi::logGeometry(NSWindow* window) const {
+    const char* const prefix = composer.brand->identifierCString();
+    const NSRect frame = window.frame;
+    const NSRect content = window.contentView.frame;
+    const NSRect layout = window.contentLayoutRect;
+    fprintf(stderr, "%s: tabs: window frame=(%g,%g %gx%g) scale=%g content frame=(%g,%g %gx%g) contentLayoutRect=(%g,%g %gx%g) border=%u bezel=%g\n", prefix, frame.origin.x, frame.origin.y, frame.size.width, frame.size.height, window.backingScaleFactor, content.origin.x, content.origin.y, content.size.width, content.size.height, layout.origin.x, layout.origin.y, layout.size.width, layout.size.height, (unsigned)(composer.opts->border), bezelWidth());
+    NSView* titlebar = bar.superview;
+    NSView* root = titlebar;
+    while (root.superview != nil && root.superview != window.contentView.superview) {
+        root = root.superview;
+    }
+    if (root != nil) {
+        csdLogSubtree(prefix, root, 0);
+    }
+    if (titlebar != nil) {
+        const NSRect inWindow = [titlebar convertRect:titlebar.bounds toView:nil];
+        fprintf(stderr, "%s: tabs: titlebar in window coordinates=(%g,%g %gx%g)\n", prefix, inWindow.origin.x, inWindow.origin.y, inWindow.size.width, inWindow.size.height);
+    }
 }
 
 void CsdTabsUi::installBezel(NSWindow* window) {
@@ -382,11 +438,16 @@ void CsdTabsUi::installBezel(NSWindow* window) {
         [bezelViews addObject:view];
         [view release];
     };
-    // Strips first, so every line lands above the material.
+    // Strips first, so every line lands above the material; each strip
+    // wears the same lift as the title bar, so plate and rim are one.
+    NSColor* const liftColor = [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift];
     for (size_t side = 0; side < 3; ++side) {
         if (bezel >= 1) {
             strips[side] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
             add(strips[side]);
+            lifts[side] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
+            [lifts[side] setColor:liftColor];
+            add(lifts[side]);
         }
     }
     for (size_t side = 0; side < 3; ++side) {
@@ -403,6 +464,16 @@ void CsdTabsUi::installBezel(NSWindow* window) {
         for (size_t at = 0; at < 2; ++at) {
             seamLines[at] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
             add(seamLines[at]);
+        }
+    }
+    if (bezel >= 1) {
+        for (size_t at = 0; at < 2; ++at) {
+            cornerMaterial[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
+            add(cornerMaterial[at]);
+            wellCorners[at] = [[CsdWellCornerView alloc] initWithFrame:NSZeroRect];
+            wellCorners[at]->owner = this;
+            wellCorners[at]->trailing = at == 1;
+            add(wellCorners[at]);
         }
     }
     // The seam lines end where the active tab flares out, which moves
@@ -428,12 +499,15 @@ void CsdTabsUi::removeBezel() {
     bezelViews = nil;
     for (size_t side = 0; side < 3; ++side) {
         strips[side] = nil;
+        lifts[side] = nil;
         for (size_t line = 0; line < 3; ++line) {
             sideLines[side][line] = nil;
         }
     }
     for (size_t at = 0; at < 2; ++at) {
         seamLines[at] = nil;
+        cornerMaterial[at] = nil;
+        wellCorners[at] = nil;
     }
 }
 
@@ -446,10 +520,24 @@ void CsdTabsUi::placeBezel() {
     const CGFloat width = bounds.size.width;
     const CGFloat height = bounds.size.height;
     const CGFloat bezel = bezelWidth();
+    // With a rim the well's top corners round off by the tab fillet;
+    // the side lines stop under the curve and the corner views take
+    // over. Without one the lines run straight up to the seam.
+    const CGFloat corner = strips[0] != nil ? csdTabFillet : 0;
+    const CGFloat rise = height > corner ? height - corner : 0;
     if (strips[0] != nil) {
         strips[0].frame = NSMakeRect(0, 0, bezel, height);
         strips[1].frame = NSMakeRect(width - bezel, 0, bezel, height);
         strips[2].frame = NSMakeRect(0, 0, width, bezel);
+        for (size_t side = 0; side < 3; ++side) {
+            lifts[side].frame = strips[side].frame;
+        }
+        cornerMaterial[0].frame = NSMakeRect(bezel, rise, corner, corner);
+        cornerMaterial[1].frame = NSMakeRect(width - bezel - corner, rise, corner, corner);
+        wellCorners[0].frame = NSMakeRect(0, rise, bezel + corner, corner);
+        wellCorners[1].frame = NSMakeRect(width - bezel - corner, rise, bezel + corner, corner);
+        wellCorners[0].needsDisplay = YES;
+        wellCorners[1].needsDisplay = YES;
     }
     // Line 0 is the lip on the terminal's own border, line 1 the shade
     // at the rim's inner edge, line 2 the glow beside it: each one point
@@ -459,10 +547,10 @@ void CsdTabsUi::placeBezel() {
     for (size_t line = 0; line < 3; ++line) {
         const CGFloat distance = bezel - (CGFloat)(line);
         if (sideLines[0][line] != nil) {
-            sideLines[0][line].frame = NSMakeRect(distance, 0, 1, height);
+            sideLines[0][line].frame = NSMakeRect(distance, 0, 1, rise);
         }
         if (sideLines[1][line] != nil) {
-            sideLines[1][line].frame = NSMakeRect(width - distance - 1, 0, 1, height);
+            sideLines[1][line].frame = NSMakeRect(width - distance - 1, 0, 1, rise);
         }
         if (sideLines[2][line] != nil) {
             sideLines[2][line].frame = NSMakeRect(0, distance, width, 1);
@@ -472,15 +560,14 @@ void CsdTabsUi::placeBezel() {
         const TabLayout tabs = layout(width);
         const CGFloat begin = tabs.left + tabs.cellWidth * (CGFloat)(active) - tabs.fillet;
         const CGFloat end = begin + tabs.cellWidth + 2 * tabs.fillet;
-        const CGFloat leading = begin > bezel ? begin - bezel : 0;
-        const CGFloat trailing = width - bezel > end ? width - bezel - end : 0;
-        // The title bar keeps a dark row of its own right above the
-        // content, over the content's top point. The lip sits one point
-        // lower, so that row lands on bare terminal background and
-        // disappears into it instead of dimming the lip.
-        const CGFloat seam = composer.opts->border >= 2 ? height - 2 : height - 1;
-        seamLines[0].frame = NSMakeRect(bezel, seam, leading, 1);
-        seamLines[1].frame = NSMakeRect(end, seam, trailing, 1);
+        // The seam lip runs between the well's rounded top corners and
+        // the active tab's flares.
+        const CGFloat from = bezel + corner;
+        const CGFloat to = width - bezel - corner;
+        const CGFloat leading = begin > from ? begin - from : 0;
+        const CGFloat trailing = to > end ? to - end : 0;
+        seamLines[0].frame = NSMakeRect(from, height - 1, leading, 1);
+        seamLines[1].frame = NSMakeRect(end, height - 1, trailing, 1);
     }
 }
 
@@ -501,6 +588,9 @@ void CsdTabsUi::restyle() {
     for (size_t at = 0; at < 2; ++at) {
         if (seamLines[at] != nil) {
             [seamLines[at] setColor:colors.lip];
+        }
+        if (wellCorners[at] != nil) {
+            wellCorners[at].needsDisplay = YES;
         }
     }
     if (bar != nil) {
@@ -592,11 +682,28 @@ void CsdTabsUi::tabOpened() {
     // The well outline: the seam along the whole bar, lifted into the
     // notch. Strokes centered on it leave their outer half on the
     // material; the fill covers the inner half.
+    // With a rim the seam starts and ends where the well's rounded top
+    // corners come up to it; the curve itself lies mostly below the
+    // seam, drawn by the corner views, and only the outer half of the
+    // strokes shows up here. Without a rim the seam spans the bar.
+    const CGFloat bezel = owner->bezelWidth();
+    const CGFloat corner = bezel >= 1 ? csdTabFillet : 0;
+    const CGFloat width = bounds.size.width;
     NSBezierPath* const outline = [NSBezierPath bezierPath];
-    [outline moveToPoint:NSMakePoint(0, 0)];
+    if (corner > 0) {
+        [outline moveToPoint:NSMakePoint(bezel, -corner)];
+        [outline appendBezierPathWithArcWithCenter:NSMakePoint(bezel + corner, -corner) radius:corner startAngle:180 endAngle:90 clockwise:YES];
+    } else {
+        [outline moveToPoint:NSMakePoint(0, 0)];
+    }
     [outline lineToPoint:NSMakePoint(left - fillet, 0)];
     [outline appendBezierPath:notch];
-    [outline lineToPoint:NSMakePoint(bounds.size.width, 0)];
+    if (corner > 0) {
+        [outline lineToPoint:NSMakePoint(width - bezel - corner, 0)];
+        [outline appendBezierPathWithArcWithCenter:NSMakePoint(width - bezel - corner, -corner) radius:corner startAngle:90 endAngle:0 clockwise:YES];
+    } else {
+        [outline lineToPoint:NSMakePoint(width, 0)];
+    }
     outline.lineJoinStyle = NSLineJoinStyleRound;
     // The fill closes below the view's bottom edge, so it reaches the
     // seam exactly and never covers the seam's own strokes.
@@ -778,6 +885,54 @@ void CsdTabsUi::tabOpened() {
 - (NSView*)hitTest:(NSPoint)point {
     (void)point;
     return nil;
+}
+
+@end
+
+@implementation CsdWellCornerView
+
+- (NSView*)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    const WellStyle colors = owner->style(self.effectiveAppearance);
+    const CGFloat bezel = owner->bezelWidth();
+    const CGFloat corner = csdTabFillet;
+    // The material square beside the rim, lifted like the rest of the
+    // plate; the quarter of the well inside the curve is filled over it.
+    const NSRect square = trailing ? NSMakeRect(0, 0, corner, corner) : NSMakeRect(bezel, 0, corner, corner);
+    [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
+    NSRectFillUsingOperation(square, NSCompositingOperationSourceOver);
+    // The well's corner circle: its center sits at the bottom of this
+    // view, a fillet in from the rim.
+    const NSPoint center = trailing ? NSMakePoint(0, 0) : NSMakePoint(bezel + corner, 0);
+    const CGFloat startAngle = trailing ? 90 : 180;
+    const CGFloat endAngle = trailing ? 0 : 90;
+    NSBezierPath* const quarter = [NSBezierPath bezierPath];
+    [quarter moveToPoint:center];
+    [quarter appendBezierPathWithArcWithCenter:center radius:corner startAngle:startAngle endAngle:endAngle clockwise:YES];
+    [quarter closePath];
+    [colors.fill setFill];
+    [quarter fill];
+    // The same lines as along the rim, bent around the curve: the glow
+    // and the shade outside it, the lip inside.
+    const auto drawLine = [&](CGFloat radius, NSColor* color) {
+        NSBezierPath* const arc = [NSBezierPath bezierPath];
+        [arc appendBezierPathWithArcWithCenter:center radius:radius startAngle:startAngle endAngle:endAngle clockwise:YES];
+        arc.lineWidth = 1;
+        [color setStroke];
+        [arc stroke];
+    };
+    if (bezel >= 2) {
+        drawLine(corner + 1.5, colors.glow);
+    }
+    drawLine(corner + 0.5, colors.shade);
+    if (owner->lipVisible()) {
+        drawLine(corner - 0.5, colors.lip);
+    }
 }
 
 @end
