@@ -150,7 +150,8 @@ namespace {
             u32 rows;
             u32 outputWidth;
             u32 outputHeight;
-            u32 border;
+            u32 originX;
+            u32 originY;
             u32 cursorColor;
             i32 cursorX;
             i32 cursorY;
@@ -173,7 +174,7 @@ namespace {
             u32 updateCount;
         };
 
-        static_assert(sizeof(PushConstants) == 112, "Vulkan push constant layout mismatch");
+        static_assert(sizeof(PushConstants) == 116, "Vulkan push constant layout mismatch");
 
         // The strip arenas mirrored on the device; append-only between
         // collections, so only the tail uploads each frame.
@@ -1770,7 +1771,8 @@ void RendererImpl::recordCommands(FrameResources& frame, u32 imageIndex, const P
             composer.geometry.rows,
             chain->direct ? chain->extent.width : composer.geometry.pixelWidth,
             chain->direct ? chain->extent.height : composer.geometry.pixelHeight,
-            composer.geometry.borderPixels,
+            composer.geometry.originX,
+            composer.geometry.originY,
             packColor(state.cursor.color),
             state.cursor.posX,
             state.cursor.posY,

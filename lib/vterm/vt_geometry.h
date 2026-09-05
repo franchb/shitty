@@ -35,4 +35,13 @@ struct VtGeometry {
     // the embedder - the content scale it folds in is presentation the
     // core never sees.
     u16 borderPixels = 0;
+    // Where the grid's first cell starts, in physical pixels: the
+    // border, plus half of what the pixel size leaves over beyond whole
+    // cells when the embedder asks for the grid centered. A canvas the
+    // embedder does not size itself - a full screen, a maximized frame,
+    // a compositor's tile - is rarely a whole number of cells, and the
+    // leftover reads better split than piled on the right and bottom.
+    u16 originX = 0;
+    u16 originY = 0;
+    bool centerRemainder = false;
 };

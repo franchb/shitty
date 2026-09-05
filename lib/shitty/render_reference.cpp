@@ -452,8 +452,8 @@ void ReferenceRendererImpl::renderCell(const TerminalUpdate& update, const Refer
         background = cursor;
     }
 
-    const int outputX = composer_.geometry.borderPixels + column * composer_.geometry.cellPixelWidth;
-    const int outputY = composer_.geometry.borderPixels + row * composer_.geometry.cellPixelHeight;
+    const int outputX = composer_.geometry.originX + column * composer_.geometry.cellPixelWidth;
+    const int outputY = composer_.geometry.originY + row * composer_.geometry.cellPixelHeight;
     const auto* coverage = (const u8*)(coverage_.data());
     const auto* color = (const u8*)(color_.data());
     const bool hidden = source.conceal || (source.blink && !update.blinkVisible);

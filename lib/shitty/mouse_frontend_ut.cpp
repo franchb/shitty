@@ -23,7 +23,8 @@ STD_TEST_SUITE(MouseFrontend) {
         const MouseGeometry geometry{
             .framebufferWidth = 84,
             .framebufferHeight = 68,
-            .border = 2,
+            .originX = 2,
+            .originY = 2,
             .glyphWidth = 8,
             .glyphHeight = 16,
         };
@@ -46,7 +47,8 @@ STD_TEST_SUITE(MouseFrontend) {
         const MouseGeometry geometry{
             .framebufferWidth = 104,
             .framebufferHeight = 54,
-            .border = 2,
+            .originX = 2,
+            .originY = 2,
             .glyphWidth = 8,
             .glyphHeight = 16,
         };

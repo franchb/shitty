@@ -480,8 +480,7 @@ bool ApplicationImpl::presentTerminal() {
         return false;
     }
     // Keep the input-method candidate window anchored to the cursor cell.
-    const u16 border = composer.geometry.borderPixels;
-    composer.window->requestTextInputRect((i32)(border + (u32)(output->cursor.posX) * composer.geometry.cellPixelWidth), (i32)(border + (u32)(output->cursor.posY) * composer.geometry.cellPixelHeight), composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight);
+    composer.window->requestTextInputRect((i32)(composer.geometry.originX + (u32)(output->cursor.posX) * composer.geometry.cellPixelWidth), (i32)(composer.geometry.originY + (u32)(output->cursor.posY) * composer.geometry.cellPixelHeight), composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight);
     vterm->consume();
     return true;
 }
@@ -504,6 +503,10 @@ void ApplicationImpl::updateWindowInfo(const plt::WindowInfo& info) {
     }
     const u16 previousColumns = composer.geometry.columns;
     const u16 previousRows = composer.geometry.rows;
+    // A canvas that is not ours to size - the screen, the maximized
+    // frame, a tiler's slot - is rarely a whole number of cells; the grid
+    // sits centered in it. A window we size ourselves snaps to cells.
+    composer.geometry.centerRemainder = info.fullscreen || info.maximized || info.tiled;
     composer.geometry.resize((u16)(min(info.width, (u32)(UINT16_MAX))), (u16)(min(info.height, (u32)(UINT16_MAX))), composer.host);
     if (composer.debugFd >= 0 && (composer.geometry.columns != previousColumns || composer.geometry.rows != previousRows)) {
         StringBuilder line;

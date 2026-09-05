@@ -19,7 +19,9 @@ enum FrontendModifier : unsigned {
 struct MouseGeometry {
     int framebufferWidth = 1;
     int framebufferHeight = 1;
-    int border = 0;
+    // Where the grid starts in the framebuffer, per axis.
+    int originX = 0;
+    int originY = 0;
     int glyphWidth = 1;
     int glyphHeight = 1;
 };

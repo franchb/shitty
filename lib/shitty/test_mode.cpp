@@ -3113,11 +3113,11 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                             raiseError(StringView(u8"invalid selection cycle"));
                         }
                         if (start) {
-                            terminal.selectStart(composer.geometry.borderPixels + column * composer.geometry.cellPixelWidth, composer.geometry.borderPixels + row * composer.geometry.cellPixelHeight, cycle != 0);
+                            terminal.selectStart(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
                         } else if (extend) {
-                            terminal.selectExtend(composer.geometry.borderPixels + column * composer.geometry.cellPixelWidth, composer.geometry.borderPixels + row * composer.geometry.cellPixelHeight, cycle != 0);
+                            terminal.selectExtend(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
                         } else {
-                            terminal.selectUpdate(composer.geometry.borderPixels + column * composer.geometry.cellPixelWidth, composer.geometry.borderPixels + row * composer.geometry.cellPixelHeight);
+                            terminal.selectUpdate(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight);
                         }
                         writeAll(controlFd, "OK\n");
                     } else if (line == StringView(u8"SELECT_RECTANGULAR")) {
@@ -3140,7 +3140,7 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                             raiseError(StringView(u8"invalid hyperlink point"));
                         }
                         Buffer link;
-                        terminal.getHyperlink(composer.geometry.borderPixels + column, composer.geometry.borderPixels + row, link);
+                        terminal.getHyperlink(composer.geometry.originX + column, composer.geometry.originY + row, link);
                         writeParts(controlFd, StringView(u8"OK "), HexOut{StringView(link)}, StringView(u8"\n"));
                     } else if (line == StringView(u8"HYPERLINK_COUNT")) {
                         writeParts(controlFd, StringView(u8"OK "), (i64)(terminal.getHyperlinkCount()), StringView(u8"\n"));
