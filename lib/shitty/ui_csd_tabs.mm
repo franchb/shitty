@@ -51,12 +51,20 @@ namespace {
     // the shade is the dark cut on the material right at the edge, the
     // glow the lit rim one point further out, the lip the faint line on
     // the well's inner wall, mixed from the terminal's foreground so it
-    // shows on any background.
+    // shows on any background. Everything on the content side is
+    // opaque: the plate is the title bar's lifted material as a flat
+    // color, and plateShade, plateGlow and lip are the lines already
+    // mixed onto what they lie on. The content layer's top device row
+    // drops translucent and vibrant layers on this platform; opaque
+    // ones it keeps.
     struct WellStyle {
         NSColor* fill;
         NSColor* shade;
         NSColor* glow;
         NSColor* lip;
+        NSColor* plate;
+        NSColor* plateShade;
+        NSColor* plateGlow;
     };
 }
 
@@ -88,11 +96,6 @@ namespace {
     NSColor* color_;
 }
 - (void)setColor:(NSColor*)color;
-@end
-
-// A strip of title-bar material along a window edge, so the well's rim
-// matches the bar above it on every background behind the window.
-@interface CsdBezelView: NSVisualEffectView
 @end
 
 // One bottom corner of the window: bends the edging lines around the
@@ -160,7 +163,6 @@ namespace {
         void restyle();
         void logGeometry(NSWindow* window) const;
         CGFloat windowCornerRadius() const;
-        static NSImage* cornerRimMask(CGFloat radius, CGFloat bezel, bool trailing);
 
         Composer& composer;
         CallSessionsChanged sessionsChanged{this};
@@ -181,17 +183,16 @@ namespace {
         NSMutableArray<NSView*>* bezelViews = nil;
         id frameObserver = nil;
         u16 bezelBorder = 0;
-        CsdBezelView* strips[3] = {};
-        CsdHairlineView* lifts[3] = {};
+        CsdHairlineView* strips[3] = {};
         CsdHairlineView* sideLines[3][3] = {};
-        CsdBezelView* cornerMaterial[2] = {};
+        CsdHairlineView* cornerMaterial[2] = {};
         CsdWellCornerView* wellCorners[2] = {};
         CsdCornerView* corners[2] = {};
-        CsdBezelView* cornerRim[2] = {};
     };
 
     static bool csdDarkAppearance(NSAppearance* appearance);
     static NSColor* csdColor(Color color, CGFloat alpha);
+    static NSColor* csdMix(CGFloat red, CGFloat green, CGFloat blue, CGFloat overRed, CGFloat overGreen, CGFloat overBlue, CGFloat alpha);
 }
 
 // The trailing new-tab cell is square-ish; everything left of it is
@@ -230,6 +231,11 @@ namespace {
     // would land beside the grid it is supposed to continue.
     static NSColor* csdColor(Color color, CGFloat alpha) {
         return [NSColor colorWithSRGBRed:color.red / 255.0 green:color.green / 255.0 blue:color.blue / 255.0 alpha:alpha];
+    }
+
+    // An opaque color: the second one laid over the first at alpha.
+    static NSColor* csdMix(CGFloat red, CGFloat green, CGFloat blue, CGFloat overRed, CGFloat overGreen, CGFloat overBlue, CGFloat alpha) {
+        return [NSColor colorWithSRGBRed:red + (overRed - red) * alpha green:green + (overGreen - green) * alpha blue:blue + (overBlue - blue) * alpha alpha:1.0];
     }
 }
 
@@ -287,11 +293,21 @@ TabLayout CsdTabsUi::layout(CGFloat width) const {
 
 WellStyle CsdTabsUi::style(NSAppearance* appearance) const {
     const bool dark = csdDarkAppearance(appearance);
+    const Color bg = composer.opts->vt.bg;
+    const Color fg = composer.opts->vt.fg;
+    const CGFloat shadeAlpha = dark ? 0.6 : 0.2;
+    const CGFloat glowAlpha = dark ? 0.1 : 0.6;
+    // The title bar material with the lift on it, as measured: what the
+    // rim continues at the seam.
+    const CGFloat plate = dark ? 55 / 255.0 : 232 / 255.0;
     WellStyle result;
-    result.fill = csdColor(composer.opts->vt.bg, 1.0);
-    result.lip = csdColor(composer.opts->vt.fg, 0.07);
-    result.shade = [NSColor colorWithSRGBRed:0 green:0 blue:0 alpha:dark ? 0.6 : 0.2];
-    result.glow = [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:dark ? 0.1 : 0.6];
+    result.fill = csdColor(bg, 1.0);
+    result.shade = [NSColor colorWithSRGBRed:0 green:0 blue:0 alpha:shadeAlpha];
+    result.glow = [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:glowAlpha];
+    result.lip = csdMix(bg.red / 255.0, bg.green / 255.0, bg.blue / 255.0, fg.red / 255.0, fg.green / 255.0, fg.blue / 255.0, 0.07);
+    result.plate = [NSColor colorWithSRGBRed:plate green:plate blue:plate alpha:1.0];
+    result.plateShade = csdMix(plate, plate, plate, 0, 0, 0, shadeAlpha);
+    result.plateGlow = csdMix(plate, plate, plate, 1, 1, 1, glowAlpha);
     return result;
 }
 
@@ -309,22 +325,6 @@ CGFloat CsdTabsUi::bezelWidth() const {
 
 bool CsdTabsUi::lipVisible() const {
     return composer.opts->border >= 1;
-}
-
-// The ring between the window's corner arc and the well's, as a mask
-// for the corner's material: the square minus the disc of the well's
-// radius around the corner circle's center. Even-odd does the cut.
-NSImage* CsdTabsUi::cornerRimMask(CGFloat radius, CGFloat bezel, bool trailing) {
-    const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
-    const CGFloat inner = radius - bezel;
-    return [NSImage imageWithSize:NSMakeSize(radius, radius) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-      NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:rect];
-      [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
-      ring.windingRule = NSWindingRuleEvenOdd;
-      [NSColor.whiteColor setFill];
-      [ring fill];
-      return YES;
-    }];
 }
 
 // The frame view rounds the window's corners through its layer; read
@@ -506,16 +506,12 @@ void CsdTabsUi::installBezel(NSWindow* window) {
         [bezelViews addObject:view];
         [view release];
     };
-    // Strips first, so every line lands above the material; each strip
-    // wears the same lift as the title bar, so plate and rim are one.
-    NSColor* const liftColor = [NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift];
+    // Strips first, so every line lands above the material: flat plate
+    // color, opaque, the title bar's lifted material continued.
     for (size_t side = 0; side < 3; ++side) {
         if (bezel >= 1) {
-            strips[side] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
+            strips[side] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
             add(strips[side]);
-            lifts[side] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
-            [lifts[side] setColor:liftColor];
-            add(lifts[side]);
         }
     }
     for (size_t side = 0; side < 3; ++side) {
@@ -530,7 +526,7 @@ void CsdTabsUi::installBezel(NSWindow* window) {
     }
     if (bezel >= 1) {
         for (size_t at = 0; at < 2; ++at) {
-            cornerMaterial[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
+            cornerMaterial[at] = [[CsdHairlineView alloc] initWithFrame:NSZeroRect];
             add(cornerMaterial[at]);
             wellCorners[at] = [[CsdWellCornerView alloc] initWithFrame:NSZeroRect];
             wellCorners[at]->owner = this;
@@ -540,14 +536,6 @@ void CsdTabsUi::installBezel(NSWindow* window) {
     }
     if (lip || bezel >= 1) {
         for (size_t at = 0; at < 2; ++at) {
-            // The strips are rectangles along the edges; around the
-            // window's rounded corner the rim swings farther in than
-            // they reach, so the corner gets material of its own, cut
-            // to the ring between the window's arc and the well's.
-            if (bezel >= 1) {
-                cornerRim[at] = [[CsdBezelView alloc] initWithFrame:NSZeroRect];
-                add(cornerRim[at]);
-            }
             corners[at] = [[CsdCornerView alloc] initWithFrame:NSZeroRect];
             corners[at]->owner = this;
             corners[at]->trailing = at == 1;
@@ -577,7 +565,6 @@ void CsdTabsUi::removeBezel() {
     bezelViews = nil;
     for (size_t side = 0; side < 3; ++side) {
         strips[side] = nil;
-        lifts[side] = nil;
         for (size_t line = 0; line < 3; ++line) {
             sideLines[side][line] = nil;
         }
@@ -586,7 +573,6 @@ void CsdTabsUi::removeBezel() {
         cornerMaterial[at] = nil;
         wellCorners[at] = nil;
         corners[at] = nil;
-        cornerRim[at] = nil;
     }
 }
 
@@ -611,20 +597,11 @@ void CsdTabsUi::placeBezel() {
         corners[1].frame = NSMakeRect(width - radius, 0, radius, radius);
         corners[0].needsDisplay = YES;
         corners[1].needsDisplay = YES;
-        if (cornerRim[0] != nil) {
-            for (size_t at = 0; at < 2; ++at) {
-                cornerRim[at].frame = corners[at].frame;
-                cornerRim[at].maskImage = cornerRimMask(radius, bezel, at == 1);
-            }
-        }
     }
     if (strips[0] != nil) {
         strips[0].frame = NSMakeRect(0, 0, bezel, height);
         strips[1].frame = NSMakeRect(width - bezel, 0, bezel, height);
         strips[2].frame = NSMakeRect(0, 0, width, bezel);
-        for (size_t side = 0; side < 3; ++side) {
-            lifts[side].frame = strips[side].frame;
-        }
         const CGFloat top = height > corner ? height - corner : 0;
         cornerMaterial[0].frame = NSMakeRect(bezel, top, corner, corner);
         cornerMaterial[1].frame = NSMakeRect(width - bezel - corner, top, corner, corner);
@@ -657,8 +634,11 @@ void CsdTabsUi::restyle() {
         return;
     }
     const WellStyle colors = style(window.effectiveAppearance);
-    NSColor* const byLine[3] = {colors.lip, colors.shade, colors.glow};
+    NSColor* const byLine[3] = {colors.lip, colors.plateShade, colors.plateGlow};
     for (size_t side = 0; side < 3; ++side) {
+        if (strips[side] != nil) {
+            [strips[side] setColor:colors.plate];
+        }
         for (size_t line = 0; line < 3; ++line) {
             if (sideLines[side][line] != nil) {
                 [sideLines[side][line] setColor:byLine[line]];
@@ -666,6 +646,9 @@ void CsdTabsUi::restyle() {
         }
     }
     for (size_t at = 0; at < 2; ++at) {
+        if (cornerMaterial[at] != nil) {
+            [cornerMaterial[at] setColor:colors.plate];
+        }
         if (wellCorners[at] != nil) {
             wellCorners[at].needsDisplay = YES;
         }
@@ -782,8 +765,7 @@ namespace {
         // The content's top point, painted opaquely: the plate's
         // material as a flat color, which is what the rim and the
         // corners hold there; the well and the seam lip go over it.
-        const bool dark = csdDarkAppearance(appearance);
-        [[NSColor colorWithSRGBRed:dark ? 55 / 255.0 : 236 / 255.0 green:dark ? 55 / 255.0 : 236 / 255.0 blue:dark ? 55 / 255.0 : 236 / 255.0 alpha:1.0] setFill];
+        [colors.plate setFill];
         NSRectFill(NSMakeRect(0, -1, width, 1));
         // The plate: the material lifted evenly, so the well is cut into
         // something visibly lighter than the terminal it holds.
@@ -820,12 +802,8 @@ namespace {
             if (bands[at].size.width <= 0) {
                 continue;
             }
-            [colors.fill setFill];
+            [owner->lipVisible() ? colors.lip : colors.fill setFill];
             NSRectFill(bands[at]);
-            if (owner->lipVisible()) {
-                [colors.lip setFill];
-                NSRectFillUsingOperation(bands[at], NSCompositingOperationSourceOver);
-            }
         }
     }
 }
@@ -1030,25 +1008,6 @@ namespace {
 
 @end
 
-@implementation CsdBezelView
-
-- (instancetype)initWithFrame:(NSRect)frame {
-    self = [super initWithFrame:frame];
-    if (self != nil) {
-        self.material = NSVisualEffectMaterialTitlebar;
-        self.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-        self.state = NSVisualEffectStateFollowsWindowActiveState;
-    }
-    return self;
-}
-
-- (NSView*)hitTest:(NSPoint)point {
-    (void)point;
-    return nil;
-}
-
-@end
-
 @implementation CsdCornerView
 
 - (NSView*)hitTest:(NSPoint)point {
@@ -1067,14 +1026,16 @@ namespace {
     const NSPoint center = NSMakePoint(trailing ? 0 : radius, radius);
     const CGFloat startAngle = trailing ? 270 : 180;
     const CGFloat endAngle = startAngle + 90;
-    // The corner's material wears the plate's lift like the strips do,
-    // over the same ring its mask cuts.
+    // The strips are rectangles along the edges; around the window's
+    // rounded corner the rim swings farther in than they reach, so the
+    // corner paints the ring between the window's arc and the well's
+    // in the plate's color itself.
     if (bezel >= 1) {
         const CGFloat inner = radius - bezel;
         NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:self.bounds];
         [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
         ring.windingRule = NSWindingRuleEvenOdd;
-        [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
+        [colors.plate setFill];
         [ring fill];
     }
     // The same lines as along the edges, at the same distances from
@@ -1091,10 +1052,10 @@ namespace {
         [arc stroke];
     };
     if (bezel >= 2) {
-        drawLine(bezel - 2, colors.glow);
+        drawLine(bezel - 2, colors.plateGlow);
     }
     if (bezel >= 1) {
-        drawLine(bezel - 1, colors.shade);
+        drawLine(bezel - 1, colors.plateShade);
     }
     if (owner->lipVisible()) {
         drawLine(bezel, colors.lip);
@@ -1118,11 +1079,11 @@ namespace {
     const WellStyle colors = owner->style(self.effectiveAppearance);
     const CGFloat bezel = owner->bezelWidth();
     const CGFloat corner = csdTabFillet;
-    // The material square beside the rim, lifted like the rest of the
-    // plate; the quarter of the well inside the curve is filled over it.
+    // The material square beside the rim, in the plate's color; the
+    // quarter of the well inside the curve is filled over it.
     const NSRect square = trailing ? NSMakeRect(0, 0, corner, corner) : NSMakeRect(bezel, 0, corner, corner);
-    [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
-    NSRectFillUsingOperation(square, NSCompositingOperationSourceOver);
+    [colors.plate setFill];
+    NSRectFill(square);
     // The well's corner circle: its center sits at the bottom of this
     // view, a fillet in from the rim.
     const NSPoint center = trailing ? NSMakePoint(0, 0) : NSMakePoint(bezel + corner, 0);
@@ -1144,9 +1105,9 @@ namespace {
         [arc stroke];
     };
     if (bezel >= 2) {
-        drawLine(corner + 1.5, colors.glow);
+        drawLine(corner + 1.5, colors.plateGlow);
     }
-    drawLine(corner + 0.5, colors.shade);
+    drawLine(corner + 0.5, colors.plateShade);
     if (owner->lipVisible()) {
         drawLine(corner - 0.5, colors.lip);
     }
