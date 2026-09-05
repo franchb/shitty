@@ -206,7 +206,9 @@ static const CGFloat csdTabCloseZone = 24;
 // The notch of the active tab: how far its top sits below the window
 // edge, its top corner radius, and the radius of the flare into the seam.
 static const CGFloat csdTabInset = 5;
-static const CGFloat csdTabRadius = 7;
+// The top corners and the flare into the seam share one radius, so the
+// notch reads as one curve going in and coming back out.
+static const CGFloat csdTabRadius = 5;
 static const CGFloat csdTabFillet = 5;
 // The radius the window's bottom corners are rounded with when the
 // window's frame does not say - and it does not: its layer reports
