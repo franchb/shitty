@@ -651,6 +651,11 @@ void CsdTabsUi::tabOpened() {
 
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
+    // The seam strokes are centered on the view's bottom edge and the
+    // well fill reaches below it. Since macOS 14 a view no longer clips
+    // to its bounds by default, and the outer halves would land on the
+    // terminal's top points as stray lines.
+    NSRectClip(self.bounds);
     NSArray<NSString*>* const labels = owner->labels;
     const NSUInteger count = labels.count;
     if (count == 0) {
@@ -898,6 +903,9 @@ void CsdTabsUi::tabOpened() {
 
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
+    // The arcs continue above this view, where the title bar strip
+    // draws its share of them; this view keeps to its own points.
+    NSRectClip(self.bounds);
     const WellStyle colors = owner->style(self.effectiveAppearance);
     const CGFloat bezel = owner->bezelWidth();
     const CGFloat corner = csdTabFillet;
