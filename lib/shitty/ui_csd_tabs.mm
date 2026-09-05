@@ -194,8 +194,9 @@ static const CGFloat csdTabInset = 5;
 static const CGFloat csdTabRadius = 7;
 static const CGFloat csdTabFillet = 5;
 // The radius the window's bottom corners are rounded with when the
-// window's frame does not say: what current releases use.
-static const CGFloat csdWindowCornerFallback = 12;
+// window's frame does not say - and it does not: its layer reports
+// none. Ten points, measured off the window's own border arc at 2x.
+static const CGFloat csdWindowCornerFallback = 10;
 // The widest material rim the well keeps between the window edge and
 // its shade line; the terminal's border must leave room for it, which
 // the macOS default border does.
