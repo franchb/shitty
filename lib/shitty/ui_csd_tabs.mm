@@ -62,12 +62,21 @@ namespace {
 
 // The iTerm2 look, recessed: the title bar itself, split into tabs by
 // hairline separators, with the active tab and the terminal below it
-// forming one well sunk into the window's material. The view spans the
-// whole title bar so the well's seam runs under the traffic lights too;
-// hits left of the tabs fall through to the bar, which keeps dragging
-// the window natively. The view owns no model - it reads labels and the
-// active index through its owner, which outlives it.
+// forming one well sunk into the window's material. The view covers the
+// tabs only and owns no model - it reads labels and the active index
+// through its owner, which outlives it.
 @interface CsdTabBarView: NSView {
+@public
+    CsdTabsUi* owner;
+}
+@end
+
+// The gap between the traffic lights and the first tab: paints its
+// share of the plate and the seam, and nothing else. It is a view of
+// its own because AppKit decides where the title bar drags the window
+// by view frames, not by hit testing - a single strip across the bar
+// that refuses to move the window over its tabs refuses everywhere.
+@interface CsdSeamView: NSView {
 @public
     CsdTabsUi* owner;
 }
@@ -157,6 +166,7 @@ namespace {
         CallSessionsChanged sessionsChanged{this};
         CallConfigChanged configChanged{this};
         CsdTabBarView* bar = nil;
+        CsdSeamView* seam = nil;
         // The projected model snapshot the view draws from; nil hides
         // the strip (a lone session keeps the clean native title).
         NSArray<NSString*>* labels = nil;
@@ -311,7 +321,7 @@ NSImage* CsdTabsUi::cornerRimMask(CGFloat radius, CGFloat bezel, bool trailing) 
     return [NSImage imageWithSize:NSMakeSize(radius, radius) flipped:NO drawingHandler:^BOOL(NSRect rect) {
       NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:rect];
       [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
-      ring.windingRule = NSEvenOddWindingRule;
+      ring.windingRule = NSWindingRuleEvenOdd;
       [NSColor.whiteColor setFill];
       [ring fill];
       return YES;
@@ -376,6 +386,9 @@ void CsdTabsUi::apply() {
             [bar removeFromSuperview];
             [bar release];
             bar = nil;
+            [seam removeFromSuperview];
+            [seam release];
+            seam = nil;
             window.titleVisibility = NSWindowTitleVisible;
             if (@available(macOS 11.0, *)) {
                 window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleAutomatic;
@@ -391,17 +404,23 @@ void CsdTabsUi::apply() {
         }
         return;
     }
-    // The gap before the first tab is bare title bar as far as hit
-    // testing goes, so it drags the window natively, double-click zoom
-    // included; the view still paints the well's seam under it.
+    // The gap before the first tab keeps dragging the window natively,
+    // double-click zoom included: it belongs to the seam view, which
+    // lets the window move; the tab strip does not.
     tabsLeft = NSMaxX(zoom.frame) + 56;
-    const NSRect frame = titlebar.bounds;
+    const NSRect bounds = titlebar.bounds;
+    const NSRect frame = NSMakeRect(tabsLeft, 0, bounds.size.width - tabsLeft, bounds.size.height);
+    const NSRect seamFrame = NSMakeRect(0, 0, tabsLeft, bounds.size.height);
     if (bar == nil) {
+        seam = [[CsdSeamView alloc] initWithFrame:seamFrame];
+        seam.autoresizingMask = NSViewMaxXMargin | NSViewHeightSizable;
+        seam->owner = this;
         bar = [[CsdTabBarView alloc] initWithFrame:frame];
         bar.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         bar->owner = this;
         // Below the traffic lights: the seam runs under them, the
         // buttons stay on top.
+        [titlebar addSubview:seam positioned:NSWindowBelow relativeTo:zoom];
         [titlebar addSubview:bar positioned:NSWindowBelow relativeTo:zoom];
         window.titleVisibility = NSWindowTitleHidden;
         // The automatic style draws a hard rule under the title bar on
@@ -415,6 +434,7 @@ void CsdTabsUi::apply() {
         }
     } else {
         bar.frame = frame;
+        seam.frame = seamFrame;
     }
     if (bezelViews != nil && bezelBorder != composer.opts->border) {
         removeBezel();
@@ -674,6 +694,7 @@ void CsdTabsUi::restyle() {
     }
     if (bar != nil) {
         bar.needsDisplay = YES;
+        seam.needsDisplay = YES;
     }
 }
 
@@ -709,18 +730,97 @@ void CsdTabsUi::tabOpened() {
     composer.window->requestFrame();
 }
 
+namespace {
+    // The well in title bar coordinates: the plate's lift, the seam
+    // with its glow and shade, the notch of the active tab filled with
+    // the terminal's background, and the lip inside. Both views over
+    // the title bar draw it whole and clip to their own frames, so the
+    // strokes meet at their shared edge without a seam of their own.
+    static void csdDrawWell(CsdTabsUi* owner, NSRect titlebar, NSAppearance* appearance) {
+        const NSUInteger active = (NSUInteger)(owner->active);
+        const NSRect bounds = titlebar;
+        const TabLayout tabs = owner->layout(bounds.size.width);
+        const WellStyle colors = owner->style(appearance);
+        const CGFloat cellWidth = tabs.cellWidth;
+        const CGFloat height = bounds.size.height;
+        // The notch of the active tab, drawn from the seam up and back down
+        // to it, y up: a flare out of the seam, two rounded top corners, a
+        // flare back in.
+        const CGFloat left = tabs.left + cellWidth * (CGFloat)(active);
+        const CGFloat right = left + cellWidth;
+        const CGFloat fillet = tabs.fillet;
+        const CGFloat radius = tabs.radius;
+        const CGFloat top = height - tabs.inset;
+        NSBezierPath* const notch = [NSBezierPath bezierPath];
+        [notch moveToPoint:NSMakePoint(left - fillet, 0)];
+        [notch appendBezierPathWithArcWithCenter:NSMakePoint(left - fillet, fillet) radius:fillet startAngle:270 endAngle:360 clockwise:NO];
+        [notch lineToPoint:NSMakePoint(left, top - radius)];
+        [notch appendBezierPathWithArcWithCenter:NSMakePoint(left + radius, top - radius) radius:radius startAngle:180 endAngle:90 clockwise:YES];
+        [notch lineToPoint:NSMakePoint(right - radius, top)];
+        [notch appendBezierPathWithArcWithCenter:NSMakePoint(right - radius, top - radius) radius:radius startAngle:90 endAngle:0 clockwise:YES];
+        [notch lineToPoint:NSMakePoint(right, fillet)];
+        [notch appendBezierPathWithArcWithCenter:NSMakePoint(right + fillet, fillet) radius:fillet startAngle:180 endAngle:270 clockwise:NO];
+        // The well outline: the seam along the whole bar, lifted into the
+        // notch. Strokes centered on it leave their outer half on the
+        // material; the fill covers the inner half.
+        // With a rim the seam starts and ends where the well's rounded top
+        // corners come up to it; the curve itself lies mostly below the
+        // seam, drawn by the corner views, and only the outer half of the
+        // strokes shows up here. Without a rim the seam spans the bar.
+        const CGFloat bezel = owner->bezelWidth();
+        const CGFloat corner = bezel >= 1 ? csdTabFillet : 0;
+        const CGFloat width = bounds.size.width;
+        NSBezierPath* const outline = [NSBezierPath bezierPath];
+        if (corner > 0) {
+            [outline moveToPoint:NSMakePoint(bezel, -corner)];
+            [outline appendBezierPathWithArcWithCenter:NSMakePoint(bezel + corner, -corner) radius:corner startAngle:180 endAngle:90 clockwise:YES];
+        } else {
+            [outline moveToPoint:NSMakePoint(0, 0)];
+        }
+        [outline lineToPoint:NSMakePoint(left - fillet, 0)];
+        [outline appendBezierPath:notch];
+        if (corner > 0) {
+            [outline lineToPoint:NSMakePoint(width - bezel - corner, 0)];
+            [outline appendBezierPathWithArcWithCenter:NSMakePoint(width - bezel - corner, -corner) radius:corner startAngle:90 endAngle:0 clockwise:YES];
+        } else {
+            [outline lineToPoint:NSMakePoint(width, 0)];
+        }
+        outline.lineJoinStyle = NSLineJoinStyleRound;
+        // The fill closes below the view's bottom edge, so it reaches the
+        // seam exactly and never covers the seam's own strokes.
+        NSBezierPath* const well = [[notch copy] autorelease];
+        [well lineToPoint:NSMakePoint(right + fillet, -2)];
+        [well lineToPoint:NSMakePoint(left - fillet, -2)];
+        [well closePath];
+        // The plate: the material lifted evenly, so the well is cut into
+        // something visibly lighter than the terminal it holds.
+        [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
+        NSRectFillUsingOperation(bounds, NSCompositingOperationSourceOver);
+        outline.lineWidth = 4;
+        [colors.glow setStroke];
+        [outline stroke];
+        outline.lineWidth = 2;
+        [colors.shade setStroke];
+        [outline stroke];
+        // The active tab is a piece of the terminal it fronts: its cell
+        // wears the terminal's background and foreground. Idle tabs stay
+        // bare, so the title bar's own material shows through.
+        [colors.fill setFill];
+        [well fill];
+        if (owner->lipVisible()) {
+            [NSGraphicsContext saveGraphicsState];
+            [well addClip];
+            [colors.lip setStroke];
+            [outline stroke];
+            [NSGraphicsContext restoreGraphicsState];
+        }
+    }
+}
+
 @implementation CsdTabBarView
 
 - (BOOL)mouseDownCanMoveWindow {
     return NO;
-}
-
-- (NSView*)hitTest:(NSPoint)point {
-    const NSPoint local = [self convertPoint:point fromView:self.superview];
-    if (local.x < owner->tabsLeft) {
-        return nil;
-    }
-    return [super hitTest:point];
 }
 
 - (void)viewDidChangeEffectiveAppearance {
@@ -740,83 +840,18 @@ void CsdTabsUi::tabOpened() {
     if (count == 0) {
         return;
     }
+    // Title bar coordinates: this view starts at the first tab, the
+    // seam view covers the gap before it.
+    const CGFloat offset = self.frame.origin.x;
+    const NSRect bounds = NSMakeRect(0, 0, self.frame.size.width + offset, self.bounds.size.height);
+    NSAffineTransform* const shift = [NSAffineTransform transform];
+    [shift translateXBy:-offset yBy:0];
+    [shift concat];
+    csdDrawWell(owner, bounds, self.effectiveAppearance);
     const NSUInteger active = (NSUInteger)(owner->active);
-    const NSRect bounds = self.bounds;
     const TabLayout tabs = owner->layout(bounds.size.width);
-    const WellStyle colors = owner->style(self.effectiveAppearance);
     const CGFloat cellWidth = tabs.cellWidth;
     const CGFloat height = bounds.size.height;
-    // The notch of the active tab, drawn from the seam up and back down
-    // to it, y up: a flare out of the seam, two rounded top corners, a
-    // flare back in.
-    const CGFloat left = tabs.left + cellWidth * (CGFloat)(active);
-    const CGFloat right = left + cellWidth;
-    const CGFloat fillet = tabs.fillet;
-    const CGFloat radius = tabs.radius;
-    const CGFloat top = height - tabs.inset;
-    NSBezierPath* const notch = [NSBezierPath bezierPath];
-    [notch moveToPoint:NSMakePoint(left - fillet, 0)];
-    [notch appendBezierPathWithArcWithCenter:NSMakePoint(left - fillet, fillet) radius:fillet startAngle:270 endAngle:360 clockwise:NO];
-    [notch lineToPoint:NSMakePoint(left, top - radius)];
-    [notch appendBezierPathWithArcWithCenter:NSMakePoint(left + radius, top - radius) radius:radius startAngle:180 endAngle:90 clockwise:YES];
-    [notch lineToPoint:NSMakePoint(right - radius, top)];
-    [notch appendBezierPathWithArcWithCenter:NSMakePoint(right - radius, top - radius) radius:radius startAngle:90 endAngle:0 clockwise:YES];
-    [notch lineToPoint:NSMakePoint(right, fillet)];
-    [notch appendBezierPathWithArcWithCenter:NSMakePoint(right + fillet, fillet) radius:fillet startAngle:180 endAngle:270 clockwise:NO];
-    // The well outline: the seam along the whole bar, lifted into the
-    // notch. Strokes centered on it leave their outer half on the
-    // material; the fill covers the inner half.
-    // With a rim the seam starts and ends where the well's rounded top
-    // corners come up to it; the curve itself lies mostly below the
-    // seam, drawn by the corner views, and only the outer half of the
-    // strokes shows up here. Without a rim the seam spans the bar.
-    const CGFloat bezel = owner->bezelWidth();
-    const CGFloat corner = bezel >= 1 ? csdTabFillet : 0;
-    const CGFloat width = bounds.size.width;
-    NSBezierPath* const outline = [NSBezierPath bezierPath];
-    if (corner > 0) {
-        [outline moveToPoint:NSMakePoint(bezel, -corner)];
-        [outline appendBezierPathWithArcWithCenter:NSMakePoint(bezel + corner, -corner) radius:corner startAngle:180 endAngle:90 clockwise:YES];
-    } else {
-        [outline moveToPoint:NSMakePoint(0, 0)];
-    }
-    [outline lineToPoint:NSMakePoint(left - fillet, 0)];
-    [outline appendBezierPath:notch];
-    if (corner > 0) {
-        [outline lineToPoint:NSMakePoint(width - bezel - corner, 0)];
-        [outline appendBezierPathWithArcWithCenter:NSMakePoint(width - bezel - corner, -corner) radius:corner startAngle:90 endAngle:0 clockwise:YES];
-    } else {
-        [outline lineToPoint:NSMakePoint(width, 0)];
-    }
-    outline.lineJoinStyle = NSLineJoinStyleRound;
-    // The fill closes below the view's bottom edge, so it reaches the
-    // seam exactly and never covers the seam's own strokes.
-    NSBezierPath* const well = [[notch copy] autorelease];
-    [well lineToPoint:NSMakePoint(right + fillet, -2)];
-    [well lineToPoint:NSMakePoint(left - fillet, -2)];
-    [well closePath];
-    // The plate: the material lifted evenly, so the well is cut into
-    // something visibly lighter than the terminal it holds.
-    [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
-    NSRectFillUsingOperation(bounds, NSCompositingOperationSourceOver);
-    outline.lineWidth = 4;
-    [colors.glow setStroke];
-    [outline stroke];
-    outline.lineWidth = 2;
-    [colors.shade setStroke];
-    [outline stroke];
-    // The active tab is a piece of the terminal it fronts: its cell
-    // wears the terminal's background and foreground. Idle tabs stay
-    // bare, so the title bar's own material shows through.
-    [colors.fill setFill];
-    [well fill];
-    if (owner->lipVisible()) {
-        [NSGraphicsContext saveGraphicsState];
-        [well addClip];
-        [colors.lip setStroke];
-        [outline stroke];
-        [NSGraphicsContext restoreGraphicsState];
-    }
     const Color terminalForeground = owner->composer.opts->vt.fg;
     NSColor* const activeText = csdColor(terminalForeground, 1.0);
     NSColor* const activeGlyphs = [activeText colorWithAlphaComponent:0.75];
@@ -903,8 +938,9 @@ void CsdTabsUi::tabOpened() {
         return;
     }
     const NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
-    const TabLayout tabs = owner->layout(self.bounds.size.width);
-    const CGFloat x = point.x - tabs.left;
+    const TabLayout tabs = owner->layout(self.frame.size.width + self.frame.origin.x);
+    // Local x runs from the first tab.
+    const CGFloat x = point.x;
     if (x < 0) {
         return;
     }
@@ -921,6 +957,29 @@ void CsdTabsUi::tabOpened() {
         return;
     }
     owner->tabSelected((size_t)(index));
+}
+
+@end
+
+@implementation CsdSeamView
+
+- (BOOL)mouseDownCanMoveWindow {
+    return YES;
+}
+
+- (NSView*)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    NSRectClip(self.bounds);
+    if (owner->labels.count == 0) {
+        return;
+    }
+    const NSRect titlebar = NSMakeRect(0, 0, self.superview.bounds.size.width, self.bounds.size.height);
+    csdDrawWell(owner, titlebar, self.effectiveAppearance);
 }
 
 @end
@@ -997,7 +1056,7 @@ void CsdTabsUi::tabOpened() {
         const CGFloat inner = radius - bezel;
         NSBezierPath* const ring = [NSBezierPath bezierPathWithRect:self.bounds];
         [ring appendBezierPathWithOvalInRect:NSMakeRect(center.x - inner, center.y - inner, 2 * inner, 2 * inner)];
-        ring.windingRule = NSEvenOddWindingRule;
+        ring.windingRule = NSWindingRuleEvenOdd;
         [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
         [ring fill];
     }
