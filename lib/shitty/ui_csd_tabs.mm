@@ -173,6 +173,10 @@ namespace {
         // redraw schedule - gone when the window loses key status, back
         // on hover - and that line cuts the well's rim off the plate.
         NSView* decoration = nil;
+        // The bare NSView AppKit keeps under the title bar's own views:
+        // it paints past its bottom edge onto the content's top row on
+        // its own schedule, the same hairline. Hidden alongside.
+        NSView* separator = nil;
         // The projected model snapshot the view draws from; nil hides
         // the strip (a lone session keeps the clean native title).
         NSArray<NSString*>* labels = nil;
@@ -398,6 +402,9 @@ void CsdTabsUi::apply() {
             decoration.hidden = NO;
             [decoration release];
             decoration = nil;
+            separator.hidden = NO;
+            [separator release];
+            separator = nil;
             window.titleVisibility = NSWindowTitleVisible;
             if (@available(macOS 11.0, *)) {
                 window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleAutomatic;
@@ -445,8 +452,19 @@ void CsdTabsUi::apply() {
                 break;
             }
         }
+        for (NSView* sibling in titlebar.subviews) {
+            if ([sibling.className isEqualToString:@"NSView"]) {
+                separator = [sibling retain];
+                if (composer.opts->vt.verbose) {
+                    CALayer* const layer = sibling.layer;
+                    fprintf(stderr, "%s: tabs: bare title bar view: layer %s shadowOpacity=%g shadowRadius=%g borderWidth=%g background=%s opaque=%d\n", composer.brand->identifierCString(), layer != nil ? "yes" : "no", layer != nil ? layer.shadowOpacity : 0.0, layer != nil ? layer.shadowRadius : 0.0, layer != nil ? layer.borderWidth : 0.0, layer != nil && layer.backgroundColor != nil ? "yes" : "no", (int)(sibling.opaque));
+                }
+                separator.hidden = YES;
+                break;
+            }
+        }
         if (composer.opts->vt.verbose) {
-            fprintf(stderr, "%s: tabs: strip installed over the title bar, decoration %s\n", composer.brand->identifierCString(), decoration != nil ? "hidden" : "not found");
+            fprintf(stderr, "%s: tabs: strip installed over the title bar, decoration %s, bare view %s\n", composer.brand->identifierCString(), decoration != nil ? "hidden" : "not found", separator != nil ? "hidden" : "not found");
         }
     } else {
         bar.frame = frame;
