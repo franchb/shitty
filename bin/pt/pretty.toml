@@ -24,6 +24,8 @@ bg = "#2e3440"
 boldColors = false
 
 # CLI: -border PIXELS — Set the empty border around the terminal grid, from 0 to 3000 pixels.
+# On macOS the title-bar tab strip sinks the active tab and the terminal into one
+# well edged along this border: 1 leaves only the inner lip, 4 shows the full rim.
 border = 2
 
 # CLI: -config PATH — Load PATH instead of the default config file; command line only.
