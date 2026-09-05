@@ -167,6 +167,12 @@ namespace {
         CallConfigChanged configChanged{this};
         CsdTabBarView* bar = nil;
         CsdSeamView* seam = nil;
+        // AppKit's own decoration over the title bar, hidden while the
+        // strip shows: it keeps drawing a hairline separator under the
+        // title bar whatever titlebarSeparatorStyle says, on its own
+        // redraw schedule - gone when the window loses key status, back
+        // on hover - and that line cuts the well's rim off the plate.
+        NSView* decoration = nil;
         // The projected model snapshot the view draws from; nil hides
         // the strip (a lone session keeps the clean native title).
         NSArray<NSString*>* labels = nil;
@@ -389,6 +395,9 @@ void CsdTabsUi::apply() {
             [seam removeFromSuperview];
             [seam release];
             seam = nil;
+            decoration.hidden = NO;
+            [decoration release];
+            decoration = nil;
             window.titleVisibility = NSWindowTitleVisible;
             if (@available(macOS 11.0, *)) {
                 window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleAutomatic;
@@ -429,8 +438,15 @@ void CsdTabsUi::apply() {
         if (@available(macOS 11.0, *)) {
             window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
         }
+        for (NSView* sibling in titlebar.superview.subviews) {
+            if ([sibling.className rangeOfString:@"TitlebarDecoration"].location != NSNotFound) {
+                decoration = [sibling retain];
+                decoration.hidden = YES;
+                break;
+            }
+        }
         if (composer.opts->vt.verbose) {
-            fprintf(stderr, "%s: tabs: strip installed over the title bar\n", composer.brand->identifierCString());
+            fprintf(stderr, "%s: tabs: strip installed over the title bar, decoration %s\n", composer.brand->identifierCString(), decoration != nil ? "hidden" : "not found");
         }
     } else {
         bar.frame = frame;
