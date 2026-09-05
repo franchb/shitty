@@ -176,7 +176,8 @@ static const CGFloat csdTabInset = 5;
 static const CGFloat csdTabRadius = 7;
 static const CGFloat csdTabFillet = 5;
 // The widest material rim the well keeps between the window edge and
-// its shade line; the terminal's border must leave room for it.
+// its shade line; the terminal's border must leave room for it, which
+// the macOS default border does.
 static const CGFloat csdBezelMax = 3;
 // The radius AppKit rounds the bottom window corners with.
 static const CGFloat csdWindowCornerRadius = 10;
@@ -343,7 +344,10 @@ void CsdTabsUi::apply() {
     // testing goes, so it drags the window natively, double-click zoom
     // included; the view still paints the well's seam under it.
     tabsLeft = NSMaxX(zoom.frame) + 56;
-    const NSRect frame = titlebar.bounds;
+    // One point past the title bar's bottom: the container keeps a row
+    // of its own under the title bar, and the seam has to cover it or
+    // a stray dark line splits the well from its rim.
+    const NSRect frame = NSMakeRect(0, -1, titlebar.bounds.size.width, titlebar.bounds.size.height + 1);
     if (bar == nil) {
         bar = [[CsdTabBarView alloc] initWithFrame:frame];
         bar.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -618,6 +622,10 @@ void CsdTabsUi::tabOpened() {
     [well lineToPoint:NSMakePoint(right + fillet, -2)];
     [well lineToPoint:NSMakePoint(left - fillet, -2)];
     [well closePath];
+    // The slab: the material darkens toward the seam and lightens toward
+    // the window edge, so the bar reads as a plate the well is cut into.
+    NSGradient* const slab = [[[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0 green:0 blue:0 alpha:0.10] endingColor:[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:0.04]] autorelease];
+    [slab drawInRect:bounds angle:90];
     outline.lineWidth = 4;
     [colors.glow setStroke];
     [outline stroke];

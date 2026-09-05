@@ -70,13 +70,22 @@ namespace {
         bool hidden = false;
     };
 
+    // macOS sinks the active tab and the terminal into one well whose rim
+    // lives in the border: three points of material with the cut and the
+    // lit edge, the lip on the terminal's own side, two points of room.
+    #if defined(__APPLE__)
+        static const char* const defaultBorder = "6";
+    #else
+        static const char* const defaultBorder = "2";
+    #endif
+
     static const OptionDesc optionsTable[] = {
 
         {"altScroll", OptionKind::NoArg, "true", "false", "Alternate scroll mode"},
         {"autoCopy", OptionKind::NoArg, "true", "false", "Sync primary to clipboard"},
         {"bg", OptionKind::SepArg, nullptr, "#000", "Background color"},
         {"boldColors", OptionKind::NoArg, "true", "false", "Brighten bold text's palette colors"},
-        {"border", OptionKind::SepArg, nullptr, "2", "Border width in pixels"},
+        {"border", OptionKind::SepArg, nullptr, defaultBorder, "Border width in pixels"},
         {"config", OptionKind::SepArg, nullptr, nullptr, "Path to the TOML config file", true},
         {"colorScheme", OptionKind::SepArg, nullptr, "default", "Named terminal color scheme"},
         {"cr", OptionKind::SepArg, nullptr, nullptr, "Cursor color"},
