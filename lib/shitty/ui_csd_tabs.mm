@@ -169,6 +169,9 @@ namespace {
         CallConfigChanged configChanged{this};
         CsdTabBarView* bar = nil;
         CsdSeamView* seam = nil;
+        // The window's own background from before the strip took the
+        // title bar, to give back when the strip goes.
+        NSColor* windowBackground = nil;
         // The projected model snapshot the view draws from; nil hides
         // the strip (a lone session keeps the clean native title).
         NSArray<NSString*>* labels = nil;
@@ -213,10 +216,6 @@ static const CGFloat csdWindowCornerFallback = 10;
 // its shade line; the terminal's border must leave room for it, which
 // the macOS default border does.
 static const CGFloat csdBezelMax = 3;
-// Lifts the title-bar material under the tabs: the well wants a plate
-// visibly lighter than the terminal to be cut into, and the standard
-// dark material sits too close to a dark terminal.
-static const CGFloat csdPlateLift = 0.08;
 
 namespace {
     static bool csdDarkAppearance(NSAppearance* appearance) {
@@ -297,8 +296,9 @@ WellStyle CsdTabsUi::style(NSAppearance* appearance) const {
     const Color fg = composer.opts->vt.fg;
     const CGFloat shadeAlpha = dark ? 0.6 : 0.2;
     const CGFloat glowAlpha = dark ? 0.1 : 0.6;
-    // The title bar material with the lift on it, as measured: what the
-    // rim continues at the seam.
+    // The plate: what the title bar's material measured with a lift on
+    // it, now the window's own background under a transparent title bar
+    // and the rim's color alike.
     const CGFloat plate = dark ? 55 / 255.0 : 232 / 255.0;
     WellStyle result;
     result.fill = csdColor(bg, 1.0);
@@ -389,6 +389,10 @@ void CsdTabsUi::apply() {
             [seam release];
             seam = nil;
             window.titleVisibility = NSWindowTitleVisible;
+            window.titlebarAppearsTransparent = NO;
+            window.backgroundColor = windowBackground;
+            [windowBackground release];
+            windowBackground = nil;
             if (@available(macOS 11.0, *)) {
                 window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleAutomatic;
             }
@@ -427,9 +431,15 @@ void CsdTabsUi::apply() {
         [titlebar addSubview:seam positioned:NSWindowBelow relativeTo:zoom];
         [titlebar addSubview:bar positioned:NSWindowBelow relativeTo:zoom];
         window.titleVisibility = NSWindowTitleHidden;
-        // The automatic style draws a hard rule under the title bar on
-        // some releases - straight through the seam where the active tab
-        // continues into its terminal.
+        // The frame draws a shadow under the title bar onto the content's
+        // top device rows, black at the first and a quarter at the
+        // second, over everything but its own border, and the separator
+        // style does not govern it. A transparent title bar draws
+        // neither the material nor that shadow; the plate then is the
+        // window's background, set in restyle() to the flat plate color
+        // the rim continues.
+        windowBackground = [window.backgroundColor retain];
+        window.titlebarAppearsTransparent = YES;
         if (@available(macOS 11.0, *)) {
             window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
         }
@@ -634,6 +644,9 @@ void CsdTabsUi::restyle() {
         return;
     }
     const WellStyle colors = style(window.effectiveAppearance);
+    if (bar != nil) {
+        window.backgroundColor = colors.plate;
+    }
     NSColor* const byLine[3] = {colors.lip, colors.plateShade, colors.plateGlow};
     for (size_t side = 0; side < 3; ++side) {
         if (strips[side] != nil) {
@@ -767,10 +780,6 @@ namespace {
         // corners hold there; the well and the seam lip go over it.
         [colors.plate setFill];
         NSRectFill(NSMakeRect(0, -1, width, 1));
-        // The plate: the material lifted evenly, so the well is cut into
-        // something visibly lighter than the terminal it holds.
-        [[NSColor colorWithSRGBRed:1 green:1 blue:1 alpha:csdPlateLift] setFill];
-        NSRectFillUsingOperation(bounds, NSCompositingOperationSourceOver);
         outline.lineWidth = 4;
         [colors.glow setStroke];
         [outline stroke];
