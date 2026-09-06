@@ -17,7 +17,6 @@
 #include <std/mem/obj_pool.h>
 
 #include <unistd.h>
-
 #include <plt/fiber.h>
 #include <plt/window.h>
 #include <plt/platform.h>
@@ -156,6 +155,14 @@ namespace {
 
         void requestResize(u32 width, u32 height) override {
             inner->requestResize(width, height);
+        }
+
+        void requestResizeCells(u32 columns, u32 rows) override {
+            inner->requestResizeCells(columns, rows);
+        }
+
+        VtGridSize gridSize(u32 width, u32 height) override {
+            return inner->gridSize(width, height);
         }
 
         void requestMaximized(bool maximized) override {

@@ -11,50 +11,38 @@
 using namespace stl;
 
 STD_TEST_SUITE(MouseFrontend) {
-    STD_TEST(ConvertsLogicalCoordinatesToFramebufferPixels) {
-        STD_INSIST(mouseFramebufferCoordinate(10.25, 2.0) == 21);
-        STD_INSIST(mouseFramebufferCoordinate(-10.25, 2.0) == -21);
-        STD_INSIST(mouseFramebufferCoordinate(10.0, 0.5) == 10);
-        STD_INSIST(mouseFramebufferCoordinate(__builtin_inf(), 2.0) == 0);
-        STD_INSIST(mouseFramebufferCoordinate(10.0, __builtin_nan("")) == 0);
-    }
-
     STD_TEST(ConvertsPixelsToCellCoordinates) {
         const MouseGeometry geometry{
-            .framebufferWidth = 84,
-            .framebufferHeight = 68,
-            .originX = 2,
-            .originY = 2,
+            .textWidth = 80,
+            .textHeight = 64,
             .glyphWidth = 8,
             .glyphHeight = 16,
         };
 
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 2, 2, geometry).column == 1);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 2, 2, geometry).row == 1);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 81, 65, geometry).column == 10);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 81, 65, geometry).row == 4);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, -100, -100, geometry).column == 1);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 0, 0, geometry).column == 1);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 0, 0, geometry).row == 1);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 79, 63, geometry).column == 10);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 79, 63, geometry).row == 4);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, -102, -102, geometry).column == 1);
 
         // The first pixel of a cell belongs to that cell, the last one to
         // the same cell — no drift at the boundary.
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 9, 2, geometry).column == 1);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 10, 2, geometry).column == 2);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 2, 17, geometry).row == 1);
-        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 2, 18, geometry).row == 2);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 7, 0, geometry).column == 1);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 8, 0, geometry).column == 2);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 0, 15, geometry).row == 1);
+        STD_INSIST(mouseProtocolPoint(MouseTrackingEnc::SGR, 0, 16, geometry).row == 2);
     }
 
     STD_TEST(SgrPixelsUseContentPixelCoordinates) {
         const MouseGeometry geometry{
-            .framebufferWidth = 104,
-            .framebufferHeight = 54,
-            .originX = 2,
-            .originY = 2,
+            .textWidth = 100,
+            .textHeight = 50,
             .glyphWidth = 8,
             .glyphHeight = 16,
         };
 
-        const MouseProtocolPoint first = mouseProtocolPoint(MouseTrackingEnc::SGRPixels, 2, 2, geometry);
-        const MouseProtocolPoint last = mouseProtocolPoint(MouseTrackingEnc::SGRPixels, 101, 51, geometry);
+        const MouseProtocolPoint first = mouseProtocolPoint(MouseTrackingEnc::SGRPixels, 0, 0, geometry);
+        const MouseProtocolPoint last = mouseProtocolPoint(MouseTrackingEnc::SGRPixels, 99, 49, geometry);
 
         STD_INSIST(first.column == 1);
         STD_INSIST(first.row == 1);

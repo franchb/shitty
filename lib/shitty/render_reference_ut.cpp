@@ -41,7 +41,7 @@ namespace {
         composer.fonts = &fonts;
         composer.geometry.setCellPixelSize(glyphWidth, glyphHeight);
         composer.extras.replace(CellExtraStore::create(composer.extras, *composer.pool, (size_t)(columns)*rows));
-        composer.geometry.resize((u16)(columns * glyphWidth + 2 * composer.geometry.borderPixels), (u16)(rows * glyphHeight + 2 * composer.geometry.borderPixels), composer.host);
+        composer.resizeWindow((u16)(columns * glyphWidth + 2 * composer.layout.borderPixels), (u16)(rows * glyphHeight + 2 * composer.layout.borderPixels));
         composer.shaper = SpanShaper::create(composer, *composer.pool);
     }
 
@@ -67,15 +67,15 @@ namespace {
 
     struct ReferenceFixture {
         explicit ReferenceFixture(Composer& composer) {
-            const size_t bytes = (size_t)(composer.geometry.pixelWidth) * composer.geometry.pixelHeight * 3;
+            const size_t bytes = (size_t)(composer.layout.pixelWidth) * composer.layout.pixelHeight * 3;
             while (pixels.length() < bytes) {
                 pixels.pushBack(0);
             }
             target.pixels = pixels.mutData();
             target.length = pixels.length();
-            target.width = composer.geometry.pixelWidth;
-            target.height = composer.geometry.pixelHeight;
-            target.stride = composer.geometry.pixelWidth * 3;
+            target.width = composer.layout.pixelWidth;
+            target.height = composer.layout.pixelHeight;
+            target.stride = composer.layout.pixelWidth * 3;
             renderer = ReferenceRenderer::create(
                 composer,
                 *rendererPool,
@@ -139,7 +139,7 @@ ScreenFixture::ScreenFixture(u16 columns, u16 rows) {
     composer->fonts = Fontpack::create(*composer, *pool, nullptr, 0, nullptr, 0, 16);
     composer->geometry.setCellPixelSize(composer->fonts->getPx(), composer->fonts->getPy());
     composer->extras.replace(CellExtraStore::create(composer->extras, *composer->pool, (size_t)(columns)*rows));
-    composer->geometry.resize((u16)(columns * composer->geometry.cellPixelWidth + 2 * composer->geometry.borderPixels), (u16)(rows * composer->geometry.cellPixelHeight + 2 * composer->geometry.borderPixels), composer->host);
+    composer->resizeWindow((u16)(columns * composer->geometry.cellPixelWidth + 2 * composer->layout.borderPixels), (u16)(rows * composer->geometry.cellPixelHeight + 2 * composer->layout.borderPixels));
     composer->shaper = SpanShaper::create(*composer, *pool);
     screen = Screen::createPrimary(composer->extras, *pool, columns, rows, &colors, 8);
 }

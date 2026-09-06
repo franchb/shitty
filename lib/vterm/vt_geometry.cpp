@@ -23,34 +23,22 @@ void VtGeometry::setCellPixelSize(u16 width, u16 height) {
     cellPixelHeight = height;
 }
 
-void VtGeometry::resize(u16 pixelWidth_, u16 pixelHeight_, VtHost* host) {
+bool VtGeometry::resizeCells(u16 columns_, u16 rows_, VtHost* host) {
     STD_ASSERT(cellPixelWidth != 0);
     STD_ASSERT(cellPixelHeight != 0);
-
-    const u32 borders = 2u * borderPixels;
-    const u32 contentWidth = pixelWidth_ > borders ? pixelWidth_ - borders : 0;
-    const u32 contentHeight = pixelHeight_ > borders ? pixelHeight_ - borders : 0;
-    const u16 columns_ = (u16)(max<u32>(1, contentWidth / cellPixelWidth));
-    const u16 rows_ = (u16)(max<u32>(1, contentHeight / cellPixelHeight));
-    const u32 gridWidth = (u32)(columns_) * cellPixelWidth;
-    const u32 gridHeight = (u32)(rows_) * cellPixelHeight;
-    const u32 spareWidth = centerRemainder && contentWidth > gridWidth ? contentWidth - gridWidth : 0;
-    const u32 spareHeight = centerRemainder && contentHeight > gridHeight ? contentHeight - gridHeight : 0;
-    const u16 originX_ = (u16)(borderPixels + spareWidth / 2);
-    const u16 originY_ = (u16)(borderPixels + spareHeight / 2);
-
-    if (columns == columns_ && rows == rows_ && pixelWidth == pixelWidth_ && pixelHeight == pixelHeight_ && originX == originX_ && originY == originY_) {
-        return;
+    columns_ = max<u16>(1, columns_);
+    rows_ = max<u16>(1, rows_);
+    const u32 pixelWidth_ = (u32)(columns_)*cellPixelWidth;
+    const u32 pixelHeight_ = (u32)(rows_)*cellPixelHeight;
+    if (columns == columns_ && rows == rows_ && pixelWidth == pixelWidth_ && pixelHeight == pixelHeight_) {
+        return false;
     }
-
     columns = columns_;
     rows = rows_;
     pixelWidth = pixelWidth_;
     pixelHeight = pixelHeight_;
-    originX = originX_;
-    originY = originY_;
-
     if (host != nullptr) {
         host->resized();
     }
+    return true;
 }

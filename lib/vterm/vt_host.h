@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "vt_geometry.h"
+
 #include <std/str/view.h>
 #include <std/sys/types.h>
 
@@ -26,6 +28,8 @@ struct VtHost {
     virtual plt::WindowInfo info() = 0;
     virtual void requestFrame() = 0;
     virtual void requestResize(u32 width, u32 height) = 0;
+    virtual void requestResizeCells(u32 columns, u32 rows) = 0;
+    virtual VtGridSize gridSize(u32 pixelWidth, u32 pixelHeight) = 0;
     virtual void requestMaximized(bool maximized) = 0;
     virtual void requestFullscreen(bool fullscreen) = 0;
     virtual void requestIconify() = 0;
@@ -42,7 +46,7 @@ struct VtHost {
     // A terminal published its undecorated title; the embedder decides
     // whether the source is visible and how a window presents it.
     virtual void titleChanged(const VtermTitleChanged& event) = 0;
-    // The grid geometry moved under an in-band resize the core applied
-    // itself; every terminal behind the window must hear it.
+    // The presenting client committed new terminal dimensions; every
+    // terminal sharing them must hear the change.
     virtual void resized() = 0;
 };

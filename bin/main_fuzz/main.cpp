@@ -245,8 +245,8 @@ namespace {
     }
 
     static bool equalHyperlink(const Rig& a, const Rig& b, u16 row, u16 column) {
-        const int x = a.headless->geometry().borderPixels + column * a.headless->geometry().cellPixelWidth;
-        const int y = a.headless->geometry().borderPixels + row * a.headless->geometry().cellPixelHeight;
+        const int x = column * a.headless->geometry().cellPixelWidth;
+        const int y = row * a.headless->geometry().cellPixelHeight;
         const StringView la = a.api->hyperlinkAt(x, y);
         const StringView lb = b.api->hyperlinkAt(x, y);
         return la.length() == lb.length() && (la.empty() || memcmp(la.data(), lb.data(), la.length()) == 0);
@@ -496,7 +496,7 @@ namespace {
                 if (len >= 2) {
                     const u16 columns = (u16)(1 + payload[0] % 200);
                     const u16 rows = (u16)(1 + payload[1] % 60);
-                    rig.headless->geometry().resize((u16)(2 * rig.headless->geometry().borderPixels + columns * rig.headless->geometry().cellPixelWidth), (u16)(2 * rig.headless->geometry().borderPixels + rows * rig.headless->geometry().cellPixelHeight), rig.headless->host());
+                    rig.headless->geometry().resizeCells(columns, rows, rig.headless->host());
                 }
                 break;
             case 218:
@@ -522,12 +522,12 @@ namespace {
                 if (len >= 2) {
                     // Grow, then shrink straight back with no writes in
                     // between: reflow must restore the grid exactly.
-                    const u16 backWidth = rig.headless->geometry().pixelWidth;
-                    const u16 backHeight = rig.headless->geometry().pixelHeight;
+                    const u16 backColumns = rig.headless->geometry().columns;
+                    const u16 backRows = rig.headless->geometry().rows;
                     const u16 columns = (u16)(rig.headless->geometry().columns + 1 + payload[0] % 80);
                     const u16 rows = (u16)(rig.headless->geometry().rows + payload[1] % 20);
-                    rig.headless->geometry().resize((u16)(2 * rig.headless->geometry().borderPixels + columns * rig.headless->geometry().cellPixelWidth), (u16)(2 * rig.headless->geometry().borderPixels + rows * rig.headless->geometry().cellPixelHeight), rig.headless->host());
-                    rig.headless->geometry().resize(backWidth, backHeight, rig.headless->host());
+                    rig.headless->geometry().resizeCells(columns, rows, rig.headless->host());
+                    rig.headless->geometry().resizeCells(backColumns, backRows, rig.headless->host());
                 }
                 break;
             case 222:
@@ -537,7 +537,7 @@ namespace {
                     const u16 glyphWidth = (u16)(1 + payload[0] % 4);
                     const u16 glyphHeight = (u16)(1 + payload[1] % 4);
                     rig.headless->geometry().setCellPixelSize(glyphWidth, glyphHeight);
-                    rig.headless->geometry().resize((u16)(2 * rig.headless->geometry().borderPixels + rig.headless->geometry().columns * glyphWidth), (u16)(2 * rig.headless->geometry().borderPixels + rig.headless->geometry().rows * glyphHeight), rig.headless->host());
+                    rig.headless->geometry().resizeCells(rig.headless->geometry().columns, rig.headless->geometry().rows, rig.headless->host());
                 }
                 break;
             case 225: {

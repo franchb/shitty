@@ -174,7 +174,7 @@ namespace {
             composer.window = host->window();
             composer.installVtHost();
             composer.geometry.setCellPixelSize(1, 1);
-            composer.geometry.resize(80, 24, composer.host);
+            composer.resizeWindow(80, 24);
             pty = createPty(*composer.pool, *composer.scheduler, host->platform());
             poller = static_cast<plt::PollerLoop*>(composer.platform->poller());
         }
@@ -312,7 +312,7 @@ STD_TEST_SUITE(Pty) {
         composer.window = host->window();
         composer.installVtHost();
         composer.geometry.setCellPixelSize(1, 1);
-        composer.geometry.resize(80, 24, composer.host);
+        composer.resizeWindow(80, 24);
 
         char program[] = "pty_ut";
         char execute[] = "-e";
@@ -484,7 +484,7 @@ STD_TEST_SUITE(Pty) {
         composer.window = host->window();
         composer.installVtHost();
         composer.geometry.setCellPixelSize(1, 1);
-        composer.geometry.resize(80, 24, composer.host);
+        composer.resizeWindow(80, 24);
         Pty* const pty = createPty(*composer.pool, *composer.scheduler, host->platform());
         ObjPool* const owner = ObjPool::fromMemoryRaw();
         char mode[] = "flood-hangup";

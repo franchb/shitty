@@ -1790,7 +1790,8 @@ size_t TestTerminal::getHyperlinkCount() {
 }
 
 void TestTerminal::getHyperlink(int x, int y, Buffer& out) {
-    const StringView result = testApi.hyperlinkAt(x, y);
+    const auto point = composer.layout.pointerPosition(x, y);
+    const StringView result = testApi.hyperlinkAt(point.pixelX, point.pixelY);
     out.reset();
     out.append(result.data(), result.length());
 }
@@ -1832,17 +1833,20 @@ void TestTerminal::pageDown() {
 }
 
 void TestTerminal::selectStart(int x, int y, bool cycle) {
-    testApi.selectionStart(x, y, cycle);
+    const auto point = composer.layout.pointerPosition(x, y);
+    testApi.selectionStart(point.pixelX, point.pixelY, cycle);
     update();
 }
 
 void TestTerminal::selectExtend(int x, int y, bool cycle) {
-    testApi.selectionExtend(x, y, cycle);
+    const auto point = composer.layout.pointerPosition(x, y);
+    testApi.selectionExtend(point.pixelX, point.pixelY, cycle);
     update();
 }
 
 void TestTerminal::selectUpdate(int x, int y) {
-    testApi.selectionUpdate(x, y);
+    const auto point = composer.layout.pointerPosition(x, y);
+    testApi.selectionUpdate(point.pixelX, point.pixelY);
     update();
 }
 
@@ -2097,8 +2101,8 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
     auto* const testFonts = composer.pool->make<TestFontpack>(composer);
     composer.fonts = testFonts;
     composer.configChangedListeners.pushBack(testFonts);
-    const u16 width = 2 * composer.geometry.borderPixels + composer.opts->nCols * composer.geometry.cellPixelWidth;
-    const u16 height = 2 * composer.geometry.borderPixels + composer.opts->nRows * composer.geometry.cellPixelHeight;
+    const u16 width = 2 * composer.layout.borderPixels + composer.opts->nCols * composer.geometry.cellPixelWidth;
+    const u16 height = 2 * composer.layout.borderPixels + composer.opts->nRows * composer.geometry.cellPixelHeight;
     composer.platform = plt::createHeadlessPlatform(*composer.pool);
     composer.config->start();
     STD_DEFER {
@@ -2122,7 +2126,7 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
     // The same startup request the interactive run makes; the first
     // dispatched frame then carries the grown window into the grid.
     applyStartupWindowState(composer);
-    composer.geometry.resize(width, height, composer.host);
+    composer.resizeWindow(width, height);
     LaunchCommand testLaunch;
     composer.launch = &testLaunch;
     TestPtyFactory ptyFactory(composer, io[0]);
@@ -2455,9 +2459,9 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                         renderComposer.fonts = fonts;
                         renderComposer.extras.replace(composer.extras.store);
                         renderComposer.geometry.setCellPixelSize(fonts->getPx(), fonts->getPy());
-                        const u16 imageWidth = 2 * composer.geometry.borderPixels + renderer.columns() * fonts->getPx();
-                        const u16 imageHeight = 2 * composer.geometry.borderPixels + renderer.rows() * fonts->getPy();
-                        renderComposer.geometry.resize(imageWidth, imageHeight, renderComposer.host);
+                        const u16 imageWidth = 2 * composer.layout.borderPixels + renderer.columns() * fonts->getPx();
+                        const u16 imageHeight = 2 * composer.layout.borderPixels + renderer.rows() * fonts->getPy();
+                        renderComposer.resizeWindow(imageWidth, imageHeight);
                         renderComposer.platform = plt::createHeadlessPlatform(*renderPool);
                         renderComposer.shaper = SpanShaper::create(renderComposer, *renderPool);
                         TerminalUpdate imageUpdate = renderer.renderUpdate();
@@ -2851,13 +2855,13 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                         if (!(args.read(columns) && args.read(rows)) || !columns || !rows) {
                             raiseError(StringView(u8"invalid resize"));
                         }
-                        terminal.resize(2 * composer.geometry.borderPixels + columns * composer.geometry.cellPixelWidth, 2 * composer.geometry.borderPixels + rows * composer.geometry.cellPixelHeight);
+                        terminal.resize(2 * composer.layout.borderPixels + columns * composer.geometry.cellPixelWidth, 2 * composer.layout.borderPixels + rows * composer.geometry.cellPixelHeight);
                         writeAll(controlFd, "OK\n");
                     } else if (startsWith(line, StringView(u8"RESIZE_PIXELS "))) {
                         ArgReader args(tail(line, 14));
                         unsigned pixelWidth;
                         unsigned pixelHeight;
-                        if (!(args.read(pixelWidth) && args.read(pixelHeight)) || pixelWidth <= 2 * composer.geometry.borderPixels || pixelHeight <= 2 * composer.geometry.borderPixels) {
+                        if (!(args.read(pixelWidth) && args.read(pixelHeight)) || pixelWidth <= 2 * composer.layout.borderPixels || pixelHeight <= 2 * composer.layout.borderPixels) {
                             raiseError(StringView(u8"invalid pixel resize"));
                         }
                         terminal.resize(pixelWidth, pixelHeight);
@@ -2911,7 +2915,7 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                         writeParts(controlFd, StringView(u8"OK "), (i64)(size.ws_col), StringView(u8" "), (i64)(size.ws_row), StringView(u8" "), (i64)(size.ws_xpixel), StringView(u8" "), (i64)(size.ws_ypixel), StringView(u8"\n"));
                     } else if (line == StringView(u8"FONT_STATE")) {
                         StringBuilder output;
-                        output << StringView(u8"OK ") << composer.fontSize << StringView(u8" ") << composer.geometry.cellPixelWidth << StringView(u8" ") << composer.geometry.cellPixelHeight << StringView(u8" ") << composer.geometry.pixelWidth << StringView(u8" ") << composer.geometry.pixelHeight << StringView(u8" ") << composer.geometry.columns << StringView(u8" ") << composer.geometry.rows << StringView(u8" ") << (unsigned)(composer.contentScale * 1000.0f + 0.5f) << StringView(u8" ") << composer.geometry.borderPixels << StringView(u8"\n");
+                        output << StringView(u8"OK ") << composer.fontSize << StringView(u8" ") << composer.geometry.cellPixelWidth << StringView(u8" ") << composer.geometry.cellPixelHeight << StringView(u8" ") << composer.layout.pixelWidth << StringView(u8" ") << composer.layout.pixelHeight << StringView(u8" ") << composer.geometry.columns << StringView(u8" ") << composer.geometry.rows << StringView(u8" ") << (unsigned)(composer.contentScale * 1000.0f + 0.5f) << StringView(u8" ") << composer.layout.borderPixels << StringView(u8"\n");
                         writeAll(controlFd, StringView(output));
                     } else if (line == StringView(u8"LAST_UPDATE")) {
                         Buffer response;
@@ -3113,11 +3117,11 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                             raiseError(StringView(u8"invalid selection cycle"));
                         }
                         if (start) {
-                            terminal.selectStart(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
+                            terminal.selectStart(composer.layout.originX + column * composer.geometry.cellPixelWidth, composer.layout.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
                         } else if (extend) {
-                            terminal.selectExtend(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
+                            terminal.selectExtend(composer.layout.originX + column * composer.geometry.cellPixelWidth, composer.layout.originY + row * composer.geometry.cellPixelHeight, cycle != 0);
                         } else {
-                            terminal.selectUpdate(composer.geometry.originX + column * composer.geometry.cellPixelWidth, composer.geometry.originY + row * composer.geometry.cellPixelHeight);
+                            terminal.selectUpdate(composer.layout.originX + column * composer.geometry.cellPixelWidth, composer.layout.originY + row * composer.geometry.cellPixelHeight);
                         }
                         writeAll(controlFd, "OK\n");
                     } else if (line == StringView(u8"SELECT_RECTANGULAR")) {
@@ -3140,7 +3144,7 @@ int runTestMode(Composer& composer, TestInput& input, plt::WindowEvents& events,
                             raiseError(StringView(u8"invalid hyperlink point"));
                         }
                         Buffer link;
-                        terminal.getHyperlink(composer.geometry.originX + column, composer.geometry.originY + row, link);
+                        terminal.getHyperlink(composer.layout.originX + column, composer.layout.originY + row, link);
                         writeParts(controlFd, StringView(u8"OK "), HexOut{StringView(link)}, StringView(u8"\n"));
                     } else if (line == StringView(u8"HYPERLINK_COUNT")) {
                         writeParts(controlFd, StringView(u8"OK "), (i64)(terminal.getHyperlinkCount()), StringView(u8"\n"));

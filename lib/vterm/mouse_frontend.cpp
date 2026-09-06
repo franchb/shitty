@@ -13,28 +13,17 @@
 
 using namespace stl;
 
-int mouseFramebufferCoordinate(double logical, double scale) {
-    if (!isfinite(logical) || !isfinite(scale)) {
-        return 0;
-    }
-    const double pixel = logical * max(1.0, scale);
-    return (int)(min(max(round(pixel), (double)(INT_MIN)), (double)(INT_MAX)));
-}
-
 MouseProtocolPoint mouseProtocolPoint(MouseTrackingEnc encoding, int pixelX, int pixelY, const MouseGeometry& geometry) {
-    const int contentWidth = max(1, geometry.framebufferWidth - 2 * geometry.originX);
-    const int contentHeight = max(1, geometry.framebufferHeight - 2 * geometry.originY);
+    const int contentWidth = max(1, (int)(min<u32>(geometry.textWidth, INT_MAX)));
+    const int contentHeight = max(1, (int)(min<u32>(geometry.textHeight, INT_MAX)));
+    const int x = min(max(pixelX, 0), contentWidth - 1);
+    const int y = min(max(pixelY, 0), contentHeight - 1);
     if (encoding == MouseTrackingEnc::SGRPixels) {
-        return {
-            min(max(pixelX - geometry.originX + 1, 1), contentWidth),
-            min(max(pixelY - geometry.originY + 1, 1), contentHeight),
-        };
+        return {x + 1, y + 1};
     }
-    const int columns = max(1, contentWidth / max(1, geometry.glyphWidth));
-    const int rows = max(1, contentHeight / max(1, geometry.glyphHeight));
     return {
-        min(max((pixelX - geometry.originX) / max(1, geometry.glyphWidth) + 1, 1), columns),
-        min(max((pixelY - geometry.originY) / max(1, geometry.glyphHeight) + 1, 1), rows),
+        x / max(1, geometry.glyphWidth) + 1,
+        y / max(1, geometry.glyphHeight) + 1,
     };
 }
 

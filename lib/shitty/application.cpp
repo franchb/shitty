@@ -61,8 +61,8 @@
 #include <plt/input.h>
 #include <plt/mutex.h>
 #include <sys/types.h>
-#include <plt/window.h>
 #include <plt/poller.h>
+#include <plt/window.h>
 #include <plt/platform.h>
 
 using namespace stl;
@@ -320,7 +320,7 @@ void ApplicationImpl::fontChanged() {
     const bool sized = !initialGeometryPending;
     const u16 columns = sized && composer.geometry.columns != 0 ? composer.geometry.columns : composer.opts->nCols;
     const u16 rows = sized && composer.geometry.rows != 0 ? composer.geometry.rows : composer.opts->nRows;
-    const u32 border = 2u * composer.geometry.borderPixels;
+    const u32 border = 2u * composer.layout.borderPixels;
     composer.window->requestMinimumSize(border + composer.geometry.cellPixelWidth, border + composer.geometry.cellPixelHeight);
     composer.window->requestResizeUnit(composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight, border, border);
     const plt::WindowInfo info = composer.window->info();
@@ -480,7 +480,7 @@ bool ApplicationImpl::presentTerminal() {
         return false;
     }
     // Keep the input-method candidate window anchored to the cursor cell.
-    composer.window->requestTextInputRect((i32)(composer.geometry.originX + (u32)(output->cursor.posX) * composer.geometry.cellPixelWidth), (i32)(composer.geometry.originY + (u32)(output->cursor.posY) * composer.geometry.cellPixelHeight), composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight);
+    composer.window->requestTextInputRect((i32)(composer.layout.originX + (u32)(output->cursor.posX) * composer.geometry.cellPixelWidth), (i32)(composer.layout.originY + (u32)(output->cursor.posY) * composer.geometry.cellPixelHeight), composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight);
     vterm->consume();
     return true;
 }
@@ -503,11 +503,7 @@ void ApplicationImpl::updateWindowInfo(const plt::WindowInfo& info) {
     }
     const u16 previousColumns = composer.geometry.columns;
     const u16 previousRows = composer.geometry.rows;
-    // A canvas that is not ours to size - the screen, the maximized
-    // frame, a tiler's slot - is rarely a whole number of cells; the grid
-    // sits centered in it. A window we size ourselves snaps to cells.
-    composer.geometry.centerRemainder = info.fullscreen || info.maximized || info.tiled;
-    composer.geometry.resize((u16)(min(info.width, (u32)(UINT16_MAX))), (u16)(min(info.height, (u32)(UINT16_MAX))), composer.host);
+    composer.resizeWindow((u16)(min(info.width, (u32)(UINT16_MAX))), (u16)(min(info.height, (u32)(UINT16_MAX))));
     if (composer.debugFd >= 0 && (composer.geometry.columns != previousColumns || composer.geometry.rows != previousRows)) {
         StringBuilder line;
         line << StringView(u8"window ") << (i64)(info.width) << StringView(u8"x") << (i64)(info.height);
@@ -547,11 +543,11 @@ bool ApplicationImpl::eventLoop() {
 }
 
 void ApplicationImpl::showWindow() {
-    const u32 border = 2u * composer.geometry.borderPixels;
+    const u32 border = 2u * composer.layout.borderPixels;
     const u32 width = border + (u32)(composer.opts->nCols) * composer.geometry.cellPixelWidth;
     const u32 height = border + (u32)(composer.opts->nRows) * composer.geometry.cellPixelHeight;
     composer.window->requestShow();
-    composer.geometry.resize((u16)(min(width, (u32)(UINT16_MAX))), (u16)(min(height, (u32)(UINT16_MAX))), composer.host);
+    composer.resizeWindow((u16)(min(width, (u32)(UINT16_MAX))), (u16)(min(height, (u32)(UINT16_MAX))));
 }
 
 void ApplicationImpl::checkLocale() {

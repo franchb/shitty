@@ -243,7 +243,7 @@ bool ReferenceRendererImpl::targetReady() const {
     if (target_ == nullptr || target_->pixels == nullptr || target_->format != plt::HeadlessPixelFormat::RGB8) {
         return false;
     }
-    if (target_->width != composer_.geometry.pixelWidth || target_->height != composer_.geometry.pixelHeight || target_->stride < target_->width * 3) {
+    if (target_->width != composer_.layout.pixelWidth || target_->height != composer_.layout.pixelHeight || target_->stride < target_->width * 3) {
         return false;
     }
     return target_->length >= (size_t)(target_->stride) * target_->height;
@@ -452,8 +452,8 @@ void ReferenceRendererImpl::renderCell(const TerminalUpdate& update, const Refer
         background = cursor;
     }
 
-    const int outputX = composer_.geometry.originX + column * composer_.geometry.cellPixelWidth;
-    const int outputY = composer_.geometry.originY + row * composer_.geometry.cellPixelHeight;
+    const int outputX = composer_.layout.originX + column * composer_.geometry.cellPixelWidth;
+    const int outputY = composer_.layout.originY + row * composer_.geometry.cellPixelHeight;
     const auto* coverage = (const u8*)(coverage_.data());
     const auto* color = (const u8*)(color_.data());
     const bool hidden = source.conceal || (source.blink && !update.blinkVisible);

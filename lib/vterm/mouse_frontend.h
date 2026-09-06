@@ -17,11 +17,8 @@ enum FrontendModifier : unsigned {
 };
 
 struct MouseGeometry {
-    int framebufferWidth = 1;
-    int framebufferHeight = 1;
-    // Where the grid starts in the framebuffer, per axis.
-    int originX = 0;
-    int originY = 0;
+    u32 textWidth = 1;
+    u32 textHeight = 1;
     int glyphWidth = 1;
     int glyphHeight = 1;
 };
@@ -31,7 +28,6 @@ struct MouseProtocolPoint {
     int row = 1;
 };
 
-int mouseFramebufferCoordinate(double logical, double scale);
 MouseProtocolPoint mouseProtocolPoint(MouseTrackingEnc encoding, int pixelX, int pixelY, const MouseGeometry& geometry);
 unsigned mouseProtocolModifiers(unsigned frontendModifiers, bool reportAlt = true);
 int mouseTerminalButton(int frontendButton);

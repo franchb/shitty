@@ -63,7 +63,7 @@ ShapeFixture::ShapeFixture() {
     composer->fontResolvers.pushBack(createEmbeddedFontResolver(*composer));
     composer->fonts = Fontpack::create(*composer, *pool, nullptr, 0, nullptr, 0, 16);
     composer->geometry.setCellPixelSize(composer->fonts->getPx(), composer->fonts->getPy());
-    composer->geometry.resize((u16)(16 * composer->geometry.cellPixelWidth + 2 * composer->geometry.borderPixels), (u16)(4 * composer->geometry.cellPixelHeight + 2 * composer->geometry.borderPixels), composer->host);
+    composer->resizeWindow((u16)(16 * composer->geometry.cellPixelWidth + 2 * composer->layout.borderPixels), (u16)(4 * composer->geometry.cellPixelHeight + 2 * composer->layout.borderPixels));
     shaper = SpanShaper::create(*composer, *pool);
     composer->shaper = shaper;
     screen = Screen::createPrimary(composer->extras, *pool, 16, 4, &colors, 8);

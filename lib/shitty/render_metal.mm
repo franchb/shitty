@@ -672,8 +672,8 @@ bool MetalRendererImpl::draw() {
         composer.geometry.rows,
         outputWidth,
         outputHeight,
-        composer.geometry.originX,
-        composer.geometry.originY,
+        composer.layout.originX,
+        composer.layout.originY,
         packColor(state.cursor.color),
         state.cursor.posX,
         state.cursor.posY,
@@ -750,8 +750,8 @@ bool MetalRendererImpl::updateOnce(const TerminalUpdate& update) {
     if (!ready || update.colors == nullptr) {
         return false;
     }
-    const u32 width = composer.geometry.pixelWidth;
-    const u32 height = composer.geometry.pixelHeight;
+    const u32 width = composer.layout.pixelWidth;
+    const u32 height = composer.layout.pixelHeight;
     const size_t cellCount = (size_t)(composer.geometry.columns) * composer.geometry.rows;
     if (width == 0 || height == 0 || cellCount == 0 || !ensureTargets(width, height)) {
         return false;

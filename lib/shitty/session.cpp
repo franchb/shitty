@@ -62,6 +62,12 @@ namespace {
         SessionSetImpl* parent;
     };
 
+    struct CallSessionsLayoutChanged final: public Listener {
+        explicit CallSessionsLayoutChanged(SessionSetImpl* parent);
+        void onListen(void*) override;
+        SessionSetImpl* parent;
+    };
+
     struct CallSessionsFontChanged final: public Listener {
         explicit CallSessionsFontChanged(SessionSetImpl* parent);
 
@@ -135,6 +141,8 @@ namespace {
         void flush() override;
 
         void everyTerminalResized();
+        void layoutChanged();
+        VtPointerPosition pointerPosition(int x, int y);
         void everyTerminalFontChanged();
         void everyTerminalConfigChanged();
         void titleChanged(const VtermTitleChanged& event);
@@ -192,6 +200,9 @@ namespace {
         // is also what the first activation used to assume.
         bool focused_ = true;
         bool pointerPresent_ = false;
+        bool pointerKnown_ = false;
+        int pointerX_ = 0;
+        int pointerY_ = 0;
         CallSessionAction copyAction{this, InputActions::Copy};
         CallSessionAction pasteAction{this, InputActions::Paste};
         CallSessionAction pastePrimaryAction{this, InputActions::PastePrimary};
@@ -199,6 +210,7 @@ namespace {
         CallSessionAction pageDownAction{this, InputActions::PageDown};
         CallSessionAction clearAction{this, InputActions::Clear};
         CallSessionsResize resizeAction{this};
+        CallSessionsLayoutChanged layoutChangedAction{this};
         CallSessionsFontChanged fontChangedAction{this};
         CallSessionsConfigChanged configChangedAction{this};
         CallTitleChanged titleChangedAction{this};
@@ -437,6 +449,9 @@ void SessionSetImpl::activate(size_t index) {
     // window gained focus or the pointer arrived still has to hear it.
     sessions[index].terminal->focus(focused_);
     sessions[index].terminal->pointerPresence(pointerPresent_);
+    if (pointerKnown_) {
+        sessions[index].terminal->pointerRepositioned(composer.layout.pointerPosition(pointerX_, pointerY_));
+    }
     if (composer.opts->vt.verbose) {
         fprintf(stderr, "%s: session: activated %zu of %zu\n", composer.brand->identifierCString(), index + 1, count_);
     }
@@ -448,6 +463,33 @@ void SessionSetImpl::activate(size_t index) {
 
 bool SessionSetImpl::closeActive() {
     return close(active_);
+}
+
+CallSessionsLayoutChanged::CallSessionsLayoutChanged(SessionSetImpl* parent_)
+    : parent(parent_)
+{
+}
+
+void CallSessionsLayoutChanged::onListen(void*) {
+    parent->layoutChanged();
+}
+
+void SessionSetImpl::layoutChanged() {
+    if (count_ == 0) {
+        return;
+    }
+    Vterm* const terminal = activeTerminal();
+    if (pointerKnown_) {
+        terminal->pointerRepositioned(composer.layout.pointerPosition(pointerX_, pointerY_));
+    }
+    terminal->expose();
+}
+
+VtPointerPosition SessionSetImpl::pointerPosition(int x, int y) {
+    pointerKnown_ = true;
+    pointerX_ = x;
+    pointerY_ = y;
+    return composer.layout.pointerPosition(x, y);
 }
 
 void SessionSetImpl::everyTerminalResized() {
@@ -623,6 +665,7 @@ SessionSet* SessionSet::create(Composer& composer) {
         composer.selectTabListeners[at].pushBack(&sessions->selectTabActions[at]);
     }
     composer.resizedListeners.pushBack(&sessions->resizeAction);
+    composer.layoutChangedListeners.pushBack(&sessions->layoutChangedAction);
     composer.fontChangedListeners.pushBack(&sessions->fontChangedAction);
     composer.configChangedListeners.pushBack(&sessions->configChangedAction);
     composer.titleChangedListeners.pushBack(&sessions->titleChangedAction);
@@ -778,15 +821,15 @@ bool SessionSetImpl::text(const plt::TextInput& input) {
 }
 
 bool SessionSetImpl::pointerMotion(const plt::PointerMotionInput& input) {
-    return activeTerminal()->pointerMotion(input);
+    return activeTerminal()->pointerMotion({pointerPosition(input.pixelX, input.pixelY), input.modifiers});
 }
 
 bool SessionSetImpl::pointerButton(const plt::PointerButtonInput& input) {
-    return activeTerminal()->pointerButton(input);
+    return activeTerminal()->pointerButton({pointerPosition(input.pixelX, input.pixelY), input.button, input.pressed, input.modifiers, input.time});
 }
 
 bool SessionSetImpl::scroll(const plt::ScrollInput& input) {
-    return activeTerminal()->scroll(input);
+    return activeTerminal()->scroll({pointerPosition(input.pixelX, input.pixelY), input.x, input.y, input.modifiers});
 }
 
 void SessionSetImpl::focus(bool focused) {

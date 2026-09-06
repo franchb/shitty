@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "terminal_layout.h"
+
 #include <lib/vterm/vt_config.h>
 #include <lib/vterm/vt_geometry.h>
 #include <lib/vterm/cell_extra_store.h>
@@ -61,14 +63,14 @@ struct Composer {
     Composer(stl::ObjPool* pool, Brand& brand);
 
     void setContentScale(float scale);
+    void resizeWindow(u32 width, u32 height);
     // Builds the VtHost adapter over the platform window and installs it
     // with the scheduler; call once the window exists.
     void installVtHost();
     // Installs the platform font backends after command-line options have
     // selected any decorators around them.
     void installFontRenderers();
-    // Publishes a parsed snapshot: the core's view (the config slot, the
-    // precomputed border) follows the swap atomically.
+    // Publishes the semantic config and the UI's scaled border together.
     void setOptions(const Options* options);
     float boxDrawingStroke() const;
     Font* loadFont(stl::ObjPool& owner, const FontRequest& request, FontMetrics& metrics);
@@ -80,6 +82,7 @@ struct Composer {
     // explicitly: the grid geometry, the reloadable config slot, the
     // cell-extra slot, and the fiber machinery every terminal shares.
     VtGeometry geometry;
+    TerminalLayout layout;
     VtConfigSlot vtConfig;
     VtCellExtras extras;
     stl::SmallObjAllocator* smallObjects = nullptr;
@@ -127,6 +130,8 @@ struct Composer {
     // resize commits the core geometry before the host adapter walks
     // this list.
     stl::IntrusiveList resizedListeners;
+    // Framebuffer size or text placement changed; no terminal resize implied.
+    stl::IntrusiveList layoutChangedListeners;
     stl::IntrusiveList contentScaleChangedListeners;
     stl::IntrusiveList fontChangedListeners;
     // Vterms publish their own undecorated title through the host

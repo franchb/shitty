@@ -100,57 +100,51 @@ STD_TEST_SUITE(Composer) {
         options.border = 7;
         composer.setOptions(&options);
 
-        STD_INSIST(composer.geometry.borderPixels == 7);
+        STD_INSIST(composer.layout.borderPixels == 7);
 
         composer.setContentScale(1.5f);
 
-        STD_INSIST(composer.geometry.borderPixels == 11);
+        STD_INSIST(composer.layout.borderPixels == 11);
     }
 
-    STD_TEST(PublishesCommittedResizeState) {
+    STD_TEST(SeparatesTerminalResizeFromWindowLayout) {
         auto pool = ObjPool::fromMemory();
         Composer& composer = *pool->make<Composer>(pool.mutPtr());
-        StateListener listener(composer);
-        composer.resizedListeners.pushBack(&listener);
+        StateListener resized(composer);
+        StateListener placed(composer);
+        composer.resizedListeners.pushBack(&resized);
+        composer.layoutChangedListeners.pushBack(&placed);
         composer.installVtHost();
         composer.geometry.setCellPixelSize(8, 16);
-        const u16 width = 2 * composer.geometry.borderPixels + 10 * composer.geometry.cellPixelWidth + 3;
-        const u16 height = 2 * composer.geometry.borderPixels + 4 * composer.geometry.cellPixelHeight + 7;
+        const u16 width = 2 * composer.layout.borderPixels + 80 + 3;
+        const u16 height = 2 * composer.layout.borderPixels + 64 + 7;
 
-        composer.geometry.resize(width, height, composer.host);
+        composer.resizeWindow(width, height);
 
-        STD_INSIST(listener.calls == 1);
-        STD_INSIST(listener.columns == 10);
-        STD_INSIST(listener.rows == 4);
-        STD_INSIST(listener.pixelWidth == width);
-        STD_INSIST(listener.pixelHeight == height);
+        STD_INSIST(resized.calls == 1 && placed.calls == 1);
+        STD_INSIST(resized.columns == 10 && resized.rows == 4);
+        STD_INSIST(resized.pixelWidth == 80 && resized.pixelHeight == 64);
+        STD_INSIST(composer.layout.originX == composer.layout.borderPixels + 1);
+        STD_INSIST(composer.layout.originY == composer.layout.borderPixels + 3);
 
-        composer.geometry.resize(width, height, composer.host);
+        composer.resizeWindow(width, height);
+        STD_INSIST(resized.calls == 1 && placed.calls == 1);
 
-        STD_INSIST(listener.calls == 1);
+        // The origin moves, but the terminal dimensions and its resize
+        // notification remain unchanged.
+        composer.resizeWindow(width + 1, height);
+        STD_INSIST(resized.calls == 1 && placed.calls == 2);
+        STD_INSIST(composer.layout.originX == composer.layout.borderPixels + 2);
+        STD_INSIST(composer.geometry.pixelWidth == 80);
 
-        composer.geometry.resize(width + 1, height, composer.host);
+        composer.resizeWindow(width - 3, height - 7);
+        STD_INSIST(resized.calls == 1 && placed.calls == 3);
+        STD_INSIST(composer.layout.originX == composer.layout.borderPixels);
+        STD_INSIST(composer.layout.originY == composer.layout.borderPixels);
 
-        STD_INSIST(listener.calls == 2);
-        STD_INSIST(listener.columns == 10);
-        STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels);
-        STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels);
-
-        // Centered, the grid takes half of the 4 and 7 spare pixels as
-        // its origin; asking again changes nothing, and the change of
-        // origin alone is a resize the host hears about.
-        composer.geometry.centerRemainder = true;
-        composer.geometry.resize(width + 1, height, composer.host);
-
-        STD_INSIST(listener.calls == 3);
-        STD_INSIST(composer.geometry.columns == 10);
-        STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels + 2);
-        STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels + 3);
-
-        composer.geometry.resize(width + 1, height, composer.host);
-
-        STD_INSIST(listener.calls == 3);
-        STD_INSIST(listener.pixelWidth == width + 1);
+        composer.resizeWindow(width + 8, height);
+        STD_INSIST(resized.calls == 2 && placed.calls == 4);
+        STD_INSIST(resized.columns == 11 && resized.pixelWidth == 88);
     }
 
     STD_TEST(PublishesCellExtraReplacement) {

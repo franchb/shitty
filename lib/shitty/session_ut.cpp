@@ -153,7 +153,7 @@ namespace {
             composer.window = composer.platform->createWindow(*composer.pool, {.width = 80, .height = 24});
             composer.installVtHost();
             composer.geometry.setCellPixelSize(1, 1);
-            composer.geometry.resize(80, 24, composer.host);
+            composer.resizeWindow(80, 24);
             composer.pty = &pty;
             composer.launch = &command;
             sessions = SessionSet::create(composer);
@@ -354,7 +354,7 @@ STD_TEST_SUITE(SessionSet) {
         const size_t firstResizes = harness.pty.handles[0]->resizes;
         const size_t secondResizes = harness.pty.handles[1]->resizes;
 
-        harness.composer.geometry.resize(100, 40, harness.composer.host);
+        harness.composer.resizeWindow(100, 40);
 
         STD_INSIST(harness.pty.handles[0]->resizes == firstResizes + 1);
         STD_INSIST(harness.pty.handles[1]->resizes == secondResizes + 1);

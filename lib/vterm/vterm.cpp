@@ -69,6 +69,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -349,9 +350,9 @@ namespace {
 
         bool key(const KeyInput& input);
         bool text(const TextInput& input);
-        bool pointerMotion(const PointerMotionInput& input);
-        bool pointerButton(const PointerButtonInput& input);
-        bool scroll(const ScrollInput& input);
+        bool pointerMotion(const VtPointerMotion& input);
+        bool pointerButton(const VtPointerButton& input);
+        bool scroll(const VtScroll& input);
         void focus(bool focused);
         void pointerPresence(bool present);
         void flush();
@@ -428,10 +429,11 @@ namespace {
         void focus(bool focused) override;
         bool key(const KeyInput& input) override;
         bool text(const TextInput& input) override;
-        bool pointerMotion(const PointerMotionInput& input) override;
-        bool pointerButton(const PointerButtonInput& input) override;
-        bool scroll(const ScrollInput& input) override;
+        bool pointerMotion(const VtPointerMotion& input) override;
+        bool pointerButton(const VtPointerButton& input) override;
+        bool scroll(const VtScroll& input) override;
         void pointerPresence(bool present) override;
+        void pointerRepositioned(const VtPointerPosition& position) override;
         void flush() override;
         void copy() override;
         void paste(bool primary) override;
@@ -582,8 +584,6 @@ namespace {
         void publishProgress(u32 state, u32 percent);
         void windowOperation(u32 operation, u32 first, u32 second);
         plt::WindowInfo windowInfo() const;
-        u32 columnsForPixelWidth(u32 width) const;
-        u32 rowsForPixelHeight(u32 height) const;
         u32 windowColumns() const;
         u32 windowRows() const;
         u32 screenColumns() const;
@@ -1602,8 +1602,8 @@ int VtermInput::currentSelectionAutoscrollDirection() const {
     if (!mouse.selectionOngoing() || !(mouse.buttons() & selectionButtons) || terminal->cf->currentSelection().null() || !pointerFocused || !pointerPresent || !pointerPositionKnown) {
         return 0;
     }
-    const int top = terminal->geometry.originY;
-    const int bottom = max(top, (int)(terminal->geometry.pixelHeight) - terminal->geometry.originY - 1);
+    const int top = 0;
+    const int bottom = max(0, (int)(min<u32>(terminal->geometry.pixelHeight, INT_MAX)) - 1);
     if (pointerY <= top) {
         return -1;
     }
@@ -2015,7 +2015,7 @@ bool VtermInput::text(const TextInput& input) {
 }
 
 void VtermInput::mouseProtocolCoordinates(MouseTrackingEnc encoding, int pixelX, int pixelY, u16& column, u16& row) const {
-    const MouseGeometry geometry = {terminal->geometry.pixelWidth, terminal->geometry.pixelHeight, terminal->geometry.originX, terminal->geometry.originY, terminal->geometry.cellPixelWidth, terminal->geometry.cellPixelHeight};
+    const MouseGeometry geometry = {terminal->geometry.pixelWidth, terminal->geometry.pixelHeight, terminal->geometry.cellPixelWidth, terminal->geometry.cellPixelHeight};
     const MouseProtocolPoint point = mouseProtocolPoint(encoding, pixelX, pixelY, geometry);
     column = point.column;
     row = point.row;
@@ -2043,8 +2043,8 @@ void VtermInput::sendMouseButtonProtocol(MouseEventType type, int button, int pi
     sendMouseProtocol(tracking.enc, type, tracking.mode == MouseTrackingMode::X10_Compat ? 0 : modifiers, button, column, row);
 }
 
-bool VtermInput::pointerButton(const PointerButtonInput& input) {
-    updatePointer(input.pixelX, input.pixelY, input.modifiers);
+bool VtermInput::pointerButton(const VtPointerButton& input) {
+    updatePointer(input.position.pixelX, input.position.pixelY, input.modifiers);
     const int button = (int)(input.button);
     mouse.updateButton(button, input.pressed);
     if (!input.pressed && (input.button == PointerButton::Primary || input.button == PointerButton::Secondary)) {
@@ -2054,8 +2054,8 @@ bool VtermInput::pointerButton(const PointerButtonInput& input) {
     const int protocolButton = mouseTerminalButton(button);
     u16 locatorColumn = 1;
     u16 locatorRow = 1;
-    mouseProtocolCoordinates(MouseTrackingEnc::Default, input.pixelX, input.pixelY, locatorColumn, locatorRow);
-    terminal->setLocatorPosition(locatorColumn, locatorRow, max(1, input.pixelX + 1), max(1, input.pixelY + 1), 0);
+    mouseProtocolCoordinates(MouseTrackingEnc::Default, input.position.pixelX, input.position.pixelY, locatorColumn, locatorRow);
+    terminal->setLocatorPosition(locatorColumn, locatorRow, (u16)(min<i64>(UINT16_MAX, max<i64>(1, (i64)(input.position.locatorPixelX) + 1))), (u16)(min<i64>(UINT16_MAX, max<i64>(1, (i64)(input.position.locatorPixelY) + 1))), 0);
     if (protocolButton >= 1 && protocolButton <= 4) {
         terminal->reportLocatorButton(protocolButton, input.pressed);
     }
@@ -2066,7 +2066,7 @@ bool VtermInput::pointerButton(const PointerButtonInput& input) {
     if (input.pressed && input.button == PointerButton::Primary) {
         hyperlinkClick = false;
         if (input.modifiers & hyperlinkModifiers) {
-            const ScreenHyperlink link = resolveLink(input.pixelX, input.pixelY);
+            const ScreenHyperlink link = resolveLink(input.position.pixelX, input.position.pixelY);
             if (!link.payload.empty()) {
                 hyperlinkClick = true;
                 terminal->host.requestOpenUri(link.payload);
@@ -2075,20 +2075,20 @@ bool VtermInput::pointerButton(const PointerButtonInput& input) {
         }
     }
     if (mouse.protocolActive(input.modifiers, tracking.mode)) {
-        sendMouseButtonProtocol(input.pressed ? MouseEventType::Press : MouseEventType::Release, protocolButton, input.pixelX, input.pixelY, input.modifiers, tracking);
+        sendMouseButtonProtocol(input.pressed ? MouseEventType::Press : MouseEventType::Release, protocolButton, input.position.pixelX, input.position.pixelY, input.modifiers, tracking);
         return true;
     }
     if (input.pressed) {
-        const bool cycleSnapTo = mouse.registerClick(button, input.pixelX, input.pixelY, input.time) > 1;
+        const bool cycleSnapTo = mouse.registerClick(button, input.position.pixelX, input.position.pixelY, input.time) > 1;
         if (input.button == PointerButton::Primary) {
             if ((input.modifiers & InputShift) && terminal->hasSelection()) {
-                terminal->selectionExtend(input.pixelX, input.pixelY, cycleSnapTo);
+                terminal->selectionExtend(input.position.pixelX, input.position.pixelY, cycleSnapTo);
             } else {
-                terminal->selectionStart(input.pixelX, input.pixelY, cycleSnapTo);
+                terminal->selectionStart(input.position.pixelX, input.position.pixelY, cycleSnapTo);
             }
             mouse.beginSelection();
         } else if (input.button == PointerButton::Secondary) {
-            terminal->selectionExtend(input.pixelX, input.pixelY, cycleSnapTo);
+            terminal->selectionExtend(input.position.pixelX, input.position.pixelY, cycleSnapTo);
             mouse.beginSelection();
         }
         return true;
@@ -2108,12 +2108,12 @@ bool VtermInput::pointerButton(const PointerButtonInput& input) {
     return true;
 }
 
-bool VtermInput::pointerMotion(const PointerMotionInput& input) {
-    updatePointer(input.pixelX, input.pixelY, input.modifiers);
+bool VtermInput::pointerMotion(const VtPointerMotion& input) {
+    updatePointer(input.position.pixelX, input.position.pixelY, input.modifiers);
     u16 locatorColumn = 1;
     u16 locatorRow = 1;
-    mouseProtocolCoordinates(MouseTrackingEnc::Default, input.pixelX, input.pixelY, locatorColumn, locatorRow);
-    terminal->setLocatorPosition(locatorColumn, locatorRow, max(1, input.pixelX + 1), max(1, input.pixelY + 1), 0);
+    mouseProtocolCoordinates(MouseTrackingEnc::Default, input.position.pixelX, input.position.pixelY, locatorColumn, locatorRow);
+    terminal->setLocatorPosition(locatorColumn, locatorRow, (u16)(min<i64>(UINT16_MAX, max<i64>(1, (i64)(input.position.locatorPixelX) + 1))), (u16)(min<i64>(UINT16_MAX, max<i64>(1, (i64)(input.position.locatorPixelY) + 1))), 0);
     const MouseTrackingState tracking = terminal->mouseTrk;
     if (mouse.protocolActive(input.modifiers, tracking.mode)) {
         stopSelectionAutoscroll();
@@ -2125,12 +2125,12 @@ bool VtermInput::pointerMotion(const PointerMotionInput& input) {
         }
         u16 column = 0;
         u16 row = 0;
-        mouseProtocolCoordinates(tracking.enc, input.pixelX, input.pixelY, column, row);
+        mouseProtocolCoordinates(tracking.enc, input.position.pixelX, input.position.pixelY, column, row);
         if (mouse.reportMotion(column, row, tracking.mode, tracking.enc, tracking.generation)) {
             sendMouseProtocol(tracking.enc, MouseEventType::Motion, input.modifiers, 0, column, row);
         }
     } else if (mouse.buttons() & ((1u << (unsigned)(PointerButton::Primary)) | (1u << (unsigned)(PointerButton::Secondary)))) {
-        terminal->selectionUpdate(input.pixelX, input.pixelY);
+        terminal->selectionUpdate(input.position.pixelX, input.position.pixelY);
         updateSelectionAutoscroll();
     } else {
         stopSelectionAutoscroll();
@@ -2138,24 +2138,24 @@ bool VtermInput::pointerMotion(const PointerMotionInput& input) {
     return true;
 }
 
-bool VtermInput::scroll(const ScrollInput& input) {
-    updatePointer(input.pixelX, input.pixelY, input.modifiers);
+bool VtermInput::scroll(const VtScroll& input) {
+    updatePointer(input.position.pixelX, input.position.pixelY, input.modifiers);
     const MouseTrackingState tracking = terminal->mouseTrk;
     const bool reporting = mouse.protocolActive(input.modifiers, tracking.mode);
     const bool alternate = terminal->altScrollMode && terminal->altScreenBufferMode;
     const MouseWheelSteps steps = mouse.consumeWheel(input.x, input.y, reporting || alternate);
     if (reporting) {
         for (int k = 0; k < steps.y; ++k) {
-            sendMouseButtonProtocol(MouseEventType::Press, 4, input.pixelX, input.pixelY, input.modifiers, tracking);
+            sendMouseButtonProtocol(MouseEventType::Press, 4, input.position.pixelX, input.position.pixelY, input.modifiers, tracking);
         }
         for (int k = 0; k < -steps.y; ++k) {
-            sendMouseButtonProtocol(MouseEventType::Press, 5, input.pixelX, input.pixelY, input.modifiers, tracking);
+            sendMouseButtonProtocol(MouseEventType::Press, 5, input.position.pixelX, input.position.pixelY, input.modifiers, tracking);
         }
         for (int k = 0; k < -steps.x; ++k) {
-            sendMouseButtonProtocol(MouseEventType::Press, 6, input.pixelX, input.pixelY, input.modifiers, tracking);
+            sendMouseButtonProtocol(MouseEventType::Press, 6, input.position.pixelX, input.position.pixelY, input.modifiers, tracking);
         }
         for (int k = 0; k < steps.x; ++k) {
-            sendMouseButtonProtocol(MouseEventType::Press, 7, input.pixelX, input.pixelY, input.modifiers, tracking);
+            sendMouseButtonProtocol(MouseEventType::Press, 7, input.position.pixelX, input.position.pixelY, input.modifiers, tracking);
         }
     } else {
         if (steps.y > 0) {
@@ -2328,20 +2328,42 @@ bool VtermImpl::text(const TextInput& value) {
     return input.text(value);
 }
 
-bool VtermImpl::pointerMotion(const PointerMotionInput& value) {
+bool VtermImpl::pointerMotion(const VtPointerMotion& value) {
     return input.pointerMotion(value);
 }
 
-bool VtermImpl::pointerButton(const PointerButtonInput& value) {
+bool VtermImpl::pointerButton(const VtPointerButton& value) {
     return input.pointerButton(value);
 }
 
-bool VtermImpl::scroll(const ScrollInput& value) {
+bool VtermImpl::scroll(const VtScroll& value) {
     return input.scroll(value);
 }
 
 void VtermImpl::pointerPresence(bool present) {
     input.pointerPresence(present);
+}
+
+void VtermImpl::pointerRepositioned(const VtPointerPosition& position) {
+    if (!input.pointerPositionKnown) {
+        return;
+    }
+    input.pointerX = position.pixelX;
+    input.pointerY = position.pixelY;
+    input.refreshHyperlinkAndRedraw();
+    u16 column = 1;
+    u16 row = 1;
+    input.mouseProtocolCoordinates(MouseTrackingEnc::Default, position.pixelX, position.pixelY, column, row);
+    // A layout change updates query coordinates without synthesizing a
+    // locator event (or testing its filter as if the pointer had moved).
+    locator.column = column;
+    locator.row = row;
+    locator.pixelX = min<i64>(UINT16_MAX, max<i64>(1, (i64)(position.locatorPixelX) + 1));
+    locator.pixelY = min<i64>(UINT16_MAX, max<i64>(1, (i64)(position.locatorPixelY) + 1));
+    if (input.mouse.selectionOngoing()) {
+        selectionUpdate(position.pixelX, position.pixelY);
+        input.updateSelectionAutoscroll();
+    }
 }
 
 void VtermImpl::flush() {
@@ -2424,13 +2446,11 @@ void VtermImpl::paste(StringView text) {
 }
 
 ScreenHyperlink VtermImpl::resolveHyperlink(int pixelX, int pixelY) const {
-    const u16 originX = geometry.originX;
-    const u16 originY = geometry.originY;
-    if (pixelX < originX || pixelY < originY || pixelX >= geometry.pixelWidth - originX || pixelY >= geometry.pixelHeight - originY) {
+    if (pixelX < 0 || pixelY < 0 || (u32)(pixelX) >= geometry.pixelWidth || (u32)(pixelY) >= geometry.pixelHeight) {
         return {};
     }
-    const u16 column = (pixelX - originX) / geometry.cellPixelWidth;
-    const u16 row = (pixelY - originY) / geometry.cellPixelHeight;
+    const u16 column = pixelX / geometry.cellPixelWidth;
+    const u16 row = pixelY / geometry.cellPixelHeight;
     const ScreenInfo info = cf->info();
     if (column >= info.columns || row >= info.rows) {
         return {};
@@ -6620,36 +6640,24 @@ plt::WindowInfo VtermImpl::windowInfo() const {
     return host.info();
 }
 
-u32 VtermImpl::columnsForPixelWidth(u32 width) const {
-    if (geometry.cellPixelWidth == 0) {
-        return geometry.columns;
-    }
-    const u32 border = 2u * geometry.borderPixels;
-    return max(1u, (width > border ? width - border : 0u) / geometry.cellPixelWidth);
-}
-
-u32 VtermImpl::rowsForPixelHeight(u32 height) const {
-    if (geometry.cellPixelHeight == 0) {
-        return geometry.rows;
-    }
-    const u32 border = 2u * geometry.borderPixels;
-    return max(1u, (height > border ? height - border : 0u) / geometry.cellPixelHeight);
-}
-
 u32 VtermImpl::windowColumns() const {
-    return columnsForPixelWidth(windowInfo().width);
+    const auto info = windowInfo();
+    return host.gridSize(info.width, info.height).columns;
 }
 
 u32 VtermImpl::windowRows() const {
-    return rowsForPixelHeight(windowInfo().height);
+    const auto info = windowInfo();
+    return host.gridSize(info.width, info.height).rows;
 }
 
 u32 VtermImpl::screenColumns() const {
-    return columnsForPixelWidth(windowInfo().screenPixelWidth);
+    const auto info = windowInfo();
+    return host.gridSize(info.screenPixelWidth, info.screenPixelHeight).columns;
 }
 
 u32 VtermImpl::screenRows() const {
-    return rowsForPixelHeight(windowInfo().screenPixelHeight);
+    const auto info = windowInfo();
+    return host.gridSize(info.screenPixelWidth, info.screenPixelHeight).rows;
 }
 
 void VtermImpl::windowOperation(u32 operation, u32 first, u32 second) {
@@ -6662,7 +6670,6 @@ void VtermImpl::windowOperation(u32 operation, u32 first, u32 second) {
             return;
         }
         window->requestResize(pixelWidth, pixelHeight);
-        geometry.resize((u16)(min(pixelWidth, (u32)(UINT16_MAX))), (u16)(min(pixelHeight, (u32)(UINT16_MAX))), &host);
     };
     switch (operation) {
         case 1:
@@ -6704,8 +6711,8 @@ void VtermImpl::windowOperation(u32 operation, u32 first, u32 second) {
         pixelWidth = second;
         pixelHeight = first;
     } else if (operation == 8 && first != 0 && second != 0) {
-        pixelWidth = 2u * geometry.borderPixels + second * geometry.cellPixelWidth;
-        pixelHeight = 2u * geometry.borderPixels + first * geometry.cellPixelHeight;
+        window->requestResizeCells(second, first);
+        return;
     } else {
         return;
     }
@@ -7390,7 +7397,7 @@ void VtermImpl::applyNotificationPart(StringView id, StringView payload, bool en
 
 void VtermImpl::reportInBandResize() {
     StringBuilder response;
-    response << StringView(u8"48;") << geometry.rows << StringView(u8";") << geometry.columns << StringView(u8";") << geometry.rows * geometry.cellPixelHeight << StringView(u8";") << geometry.columns * geometry.cellPixelWidth << StringView(u8"t");
+    response << StringView(u8"48;") << geometry.rows << StringView(u8";") << geometry.columns << StringView(u8";") << geometry.pixelHeight << StringView(u8";") << geometry.pixelWidth << StringView(u8"t");
     writeCsiResponse(StringView(response));
 }
 
@@ -7477,9 +7484,10 @@ void VtermImpl::xtReportWindowPosition() {
 void VtermImpl::xtReportWindowPixelSize(bool compositorSize) {
     StringBuilder response;
     if (compositorSize) {
-        response << StringView(u8"4;") << geometry.pixelHeight << StringView(u8";") << geometry.pixelWidth << StringView(u8"t");
+        const auto info = windowInfo();
+        response << StringView(u8"4;") << info.height << StringView(u8";") << info.width << StringView(u8"t");
     } else {
-        response << StringView(u8"4;") << geometry.rows * geometry.cellPixelHeight << StringView(u8";") << geometry.columns * geometry.cellPixelWidth << StringView(u8"t");
+        response << StringView(u8"4;") << geometry.pixelHeight << StringView(u8";") << geometry.pixelWidth << StringView(u8"t");
     }
     writeCsiResponse(StringView(response));
 }
@@ -9835,12 +9843,10 @@ void VtermImpl::getHyperlink(int pX, int pY, Buffer& out) const {
 }
 
 Point VtermImpl::selectionPoint(int pX, int pY) const {
-    const int originX = geometry.originX;
-    const int originY = geometry.originY;
-    const int contentWidth = max(0, (int)geometry.pixelWidth - 2 * originX);
-    const int contentHeight = max(1, (int)geometry.pixelHeight - 2 * originY);
-    pX = min(max(0, pX - originX), contentWidth);
-    pY = min(max(0, pY - originY), contentHeight - 1);
+    const int contentWidth = (int)(min<u32>(geometry.pixelWidth, INT_MAX));
+    const int contentHeight = max(1, (int)(min<u32>(geometry.pixelHeight, INT_MAX)));
+    pX = min(max(0, pX), contentWidth);
+    pY = min(max(0, pY), contentHeight - 1);
     return cf->logicalPoint(Point(min(pX / geometry.cellPixelWidth, (int)geometry.columns), min(pY / geometry.cellPixelHeight, (int)geometry.rows - 1)));
 }
 

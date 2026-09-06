@@ -116,6 +116,8 @@ namespace {
         plt::WindowInfo info() override;
         void requestFrame() override;
         void requestResize(u32 width, u32 height) override;
+        void requestResizeCells(u32 columns, u32 rows) override;
+        VtGridSize gridSize(u32 pixelWidth, u32 pixelHeight) override;
         void requestMaximized(bool maximized) override;
         void requestFullscreen(bool fullscreen) override;
         void requestIconify() override;
@@ -260,13 +262,20 @@ void EmbedHost::requestFrame() {
 }
 
 void EmbedHost::requestResize(u32 width, u32 height) {
-    if (vt.callbacks == nullptr || vt.callbacks->resize_request == nullptr) {
-        return;
+    const u16 columns = width < UINT16_MAX ? width : UINT16_MAX;
+    const u16 rows = height < UINT16_MAX ? height : UINT16_MAX;
+    if (vt.callbacks != nullptr && vt.callbacks->resize_request != nullptr) {
+        vt.callbacks->resize_request(vt.callbacks->user, columns, rows);
     }
-    // The cell is one pixel square, so the pixel request is already in
-    // cells.
-    const u32 limit = 0xffff;
-    vt.callbacks->resize_request(vt.callbacks->user, (u16)(width < limit ? width : limit), (u16)(height < limit ? height : limit));
+    vt.geometry.resizeCells(columns, rows, this);
+}
+
+void EmbedHost::requestResizeCells(u32 columns, u32 rows) {
+    requestResize(columns, rows);
+}
+
+VtGridSize EmbedHost::gridSize(u32 width, u32 height) {
+    return {width, height};
 }
 
 void EmbedHost::requestMaximized(bool) {
@@ -550,7 +559,7 @@ shitty_vt* shitty_vt_new(uint16_t columns, uint16_t rows, uint16_t save_lines, c
         fillConfig(vt->config, save_lines);
         vt->slot.config = &vt->config;
         vt->geometry.setCellPixelSize(1, 1);
-        vt->geometry.resize(columns, rows, nullptr);
+        vt->geometry.resizeCells(columns, rows, nullptr);
         vt->extras.store = CellExtraStore::create(vt->extras, *pool.ptr, 0);
         vt->smallObjects = SmallObjAllocator::create(pool.ptr);
         vt->host = pool->make<EmbedHost>(*vt);
@@ -588,7 +597,7 @@ void shitty_vt_resize(shitty_vt* vt, uint16_t columns, uint16_t rows) {
     if (columns == 0 || rows == 0) {
         return;
     }
-    vt->geometry.resize(columns, rows, vt->host);
+    vt->geometry.resizeCells(columns, rows, vt->host);
 }
 
 size_t shitty_vt_take_replies(shitty_vt* vt, uint8_t* out, size_t cap) {
@@ -803,30 +812,27 @@ int shitty_vt_mouse_button(shitty_vt* vt, int button, int pressed, int32_t colum
     if (button < 0 || button > SHITTY_VT_MOUSE_AUX5) {
         return 0;
     }
-    plt::PointerButtonInput input;
+    VtPointerButton input;
     input.button = (plt::PointerButton)(button);
     input.pressed = pressed != 0;
-    input.pixelX = column;
-    input.pixelY = row;
+    input.position = {column, row, column, row};
     input.modifiers = modifiers;
     input.time = time;
     return vt->terminal->pointerButton(input) ? 1 : 0;
 }
 
 int shitty_vt_mouse_motion(shitty_vt* vt, int32_t column, int32_t row, uint16_t modifiers) {
-    plt::PointerMotionInput input;
-    input.pixelX = column;
-    input.pixelY = row;
+    VtPointerMotion input;
+    input.position = {column, row, column, row};
     input.modifiers = modifiers;
     return vt->terminal->pointerMotion(input) ? 1 : 0;
 }
 
 int shitty_vt_mouse_scroll(shitty_vt* vt, double dx, double dy, int32_t column, int32_t row, uint16_t modifiers) {
-    plt::ScrollInput input;
+    VtScroll input;
     input.x = dx;
     input.y = dy;
-    input.pixelX = column;
-    input.pixelY = row;
+    input.position = {column, row, column, row};
     input.modifiers = modifiers;
     return vt->terminal->scroll(input) ? 1 : 0;
 }

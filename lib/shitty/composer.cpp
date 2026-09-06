@@ -11,8 +11,8 @@
 #include "font_face.h"
 #include "font_pack.h"
 #include "font_path.h"
-#include "font_optical.h"
 #include "glyph_cache.h"
+#include "font_optical.h"
 #include "input_router.h"
 #include "font_coretext.h"
 #include "font_embedded.h"
@@ -120,6 +120,8 @@ namespace {
         plt::WindowInfo info() override;
         void requestFrame() override;
         void requestResize(u32 width, u32 height) override;
+        void requestResizeCells(u32 columns, u32 rows) override;
+        VtGridSize gridSize(u32 pixelWidth, u32 pixelHeight) override;
         void requestMaximized(bool maximized) override;
         void requestFullscreen(bool fullscreen) override;
         void requestIconify() override;
@@ -168,6 +170,26 @@ void ComposerVtHost::requestFrame() {
 
 void ComposerVtHost::requestResize(u32 width, u32 height) {
     composer.window->requestResize(width, height);
+    composer.resizeWindow(width, height);
+}
+
+void ComposerVtHost::requestResizeCells(u32 columns, u32 rows) {
+    requestResize(2u * composer.layout.borderPixels + columns * composer.geometry.cellPixelWidth, 2u * composer.layout.borderPixels + rows * composer.geometry.cellPixelHeight);
+}
+
+VtGridSize ComposerVtHost::gridSize(u32 width, u32 height) {
+    return composer.layout.gridSize(width, height, composer.geometry.cellPixelWidth, composer.geometry.cellPixelHeight);
+}
+
+void Composer::resizeWindow(u32 width, u32 height) {
+    width = min(width, (u32)(UINT16_MAX));
+    height = min(height, (u32)(UINT16_MAX));
+    const VtGridSize grid = layout.gridSize(width, height, geometry.cellPixelWidth, geometry.cellPixelHeight);
+    const bool moved = layout.resize(width, height, grid.columns * geometry.cellPixelWidth, grid.rows * geometry.cellPixelHeight);
+    const bool resized = geometry.resizeCells(grid.columns, grid.rows, host);
+    if (moved || resized) {
+        walk(layoutChangedListeners);
+    }
 }
 
 void ComposerVtHost::requestMaximized(bool maximized) {
@@ -249,7 +271,7 @@ void Composer::setContentScale(float scale) {
         return;
     }
     contentScale = scale;
-    geometry.borderPixels = scaledBorder(opts->border, contentScale);
+    layout.borderPixels = scaledBorder(opts->border, contentScale);
     for (IntrusiveNode* node = contentScaleChangedListeners.mutFront(); node != contentScaleChangedListeners.mutEnd();) {
         Listener* const listener = static_cast<Listener*>(node);
         node = node->next;
@@ -260,7 +282,7 @@ void Composer::setContentScale(float scale) {
 void Composer::setOptions(const Options* options) {
     opts = options;
     vtConfig.config = &options->vt;
-    geometry.borderPixels = scaledBorder(options->border, contentScale);
+    layout.borderPixels = scaledBorder(options->border, contentScale);
 }
 
 float Composer::boxDrawingStroke() const {

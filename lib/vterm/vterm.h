@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "vt_pointer.h"
+
 #include <lib/vterm/rect.h>
 #include <lib/vterm/terminal_types.h>
 
@@ -177,11 +179,14 @@ struct Vterm {
     // this terminal; Vterm does not join a global input router itself.
     virtual bool key(const plt::KeyInput& input) = 0;
     virtual bool text(const plt::TextInput& input) = 0;
-    virtual bool pointerMotion(const plt::PointerMotionInput& input) = 0;
-    virtual bool pointerButton(const plt::PointerButtonInput& input) = 0;
-    virtual bool scroll(const plt::ScrollInput& input) = 0;
+    virtual bool pointerMotion(const VtPointerMotion& input) = 0;
+    virtual bool pointerButton(const VtPointerButton& input) = 0;
+    virtual bool scroll(const VtScroll& input) = 0;
     virtual void focus(bool focused) = 0;
     virtual void pointerPresence(bool present) = 0;
+    // Placement changed under a stationary pointer. Update local state
+    // without generating a synthetic mouse-motion report.
+    virtual void pointerRepositioned(const VtPointerPosition& position) = 0;
     virtual void flush() = 0;
     // Terminal actions are likewise invoked by the presenting client.
     virtual void copy() = 0;

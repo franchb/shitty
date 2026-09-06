@@ -18,6 +18,7 @@
 
 #include <std/ios/out.h>
 #include <std/ios/input.h>
+#include <std/alg/minmax.h>
 #include <std/dbg/insist.h>
 #include <std/ios/output.h>
 #include <std/lib/buffer.h>
@@ -91,6 +92,8 @@ namespace {
         plt::WindowInfo info() override;
         void requestFrame() override;
         void requestResize(u32 width, u32 height) override;
+        void requestResizeCells(u32 columns, u32 rows) override;
+        VtGridSize gridSize(u32 pixelWidth, u32 pixelHeight) override;
         void requestMaximized(bool maximized) override;
         void requestFullscreen(bool fullscreen) override;
         void requestIconify() override;
@@ -106,6 +109,7 @@ namespace {
 
         plt::Window* window;
         Vterm* terminal = nullptr;
+        VtGeometry* geometry = nullptr;
     };
 }
 
@@ -132,6 +136,16 @@ void HeadlessVtHost::requestFrame() {
 
 void HeadlessVtHost::requestResize(u32 width, u32 height) {
     window->requestResize(width, height);
+    const auto grid = gridSize(width, height);
+    geometry->resizeCells((u16)(min(grid.columns, (u32)(UINT16_MAX))), (u16)(min(grid.rows, (u32)(UINT16_MAX))), this);
+}
+
+VtGridSize HeadlessVtHost::gridSize(u32 width, u32 height) {
+    return {max(1u, width / geometry->cellPixelWidth), max(1u, height / geometry->cellPixelHeight)};
+}
+
+void HeadlessVtHost::requestResizeCells(u32 columns, u32 rows) {
+    requestResize(columns * geometry->cellPixelWidth, rows * geometry->cellPixelHeight);
 }
 
 void HeadlessVtHost::requestMaximized(bool maximized) {
@@ -319,8 +333,9 @@ VtermHeadless* VtermHeadless::create(ObjPool& pool, const VtConfig& config, Vter
     result->window_ = window;
     result->host_ = host;
     result->configSlot_.config = &config;
+    host->geometry = &result->geometry_;
     result->geometry_.setCellPixelSize(cellPixelWidth, cellPixelHeight);
-    result->geometry_.resize(pixelWidth, pixelHeight, host);
+    result->geometry_.resizeCells(columns, rows, host);
     result->extras_.store = CellExtraStore::create(result->extras_, pool, 0);
     SmallObjAllocator* const smallObjects = SmallObjAllocator::create(&pool);
     plt::Scheduler* const scheduler = platform->scheduler();

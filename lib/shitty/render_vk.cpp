@@ -1769,10 +1769,10 @@ void RendererImpl::recordCommands(FrameResources& frame, u32 imageIndex, const P
             composer.boxDrawingStroke(),
             composer.geometry.columns,
             composer.geometry.rows,
-            chain->direct ? chain->extent.width : composer.geometry.pixelWidth,
-            chain->direct ? chain->extent.height : composer.geometry.pixelHeight,
-            composer.geometry.originX,
-            composer.geometry.originY,
+            chain->direct ? chain->extent.width : composer.layout.pixelWidth,
+            chain->direct ? chain->extent.height : composer.layout.pixelHeight,
+            composer.layout.originX,
+            composer.layout.originY,
             packColor(state.cursor.color),
             state.cursor.posX,
             state.cursor.posY,
@@ -1993,8 +1993,8 @@ bool RendererImpl::repaintFrame() {
 }
 
 bool RendererImpl::present(const TerminalUpdate& update) {
-    const u32 width = composer.geometry.pixelWidth;
-    const u32 height = composer.geometry.pixelHeight;
+    const u32 width = composer.layout.pixelWidth;
+    const u32 height = composer.layout.pixelHeight;
     const size_t cellCount = (size_t)(composer.geometry.columns) * composer.geometry.rows;
     if (cellCount == 0 || width == 0 || height == 0) {
         return false;
