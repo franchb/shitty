@@ -38,6 +38,70 @@ def observable(terminal):
 
 
 class ParserStreamingTest(unittest.TestCase):
+    def assert_wide_stream_matches_bytewise(self, columns, setup, text):
+        # Bytewise UTF-8 takes the scalar placement path. Compare full
+        # cells (including graphemes), cursor and retained history, so a
+        # batched write cannot hide a lost joiner or a shifted wrap.
+        snapshots = []
+        for fragmented in (False, True):
+            with Shitty(columns=columns, rows=4, save_lines=8) as terminal:
+                terminal.write(setup)
+                if fragmented:
+                    terminal.write_chunks(*(bytes([byte]) for byte in text))
+                else:
+                    terminal.write(text)
+                views = []
+                for _ in range(5):
+                    snapshot = terminal.snapshot()
+                    snapshot.refresh_count = 0
+                    views.append(snapshot)
+                    terminal.page_up()
+                snapshots.append(views)
+        self.assertEqual(snapshots[0], snapshots[1])
+
+    def test_wide_runs_match_bytewise_at_row_boundaries(self):
+        text = ("a日本語한글👩\u200d💻👍🏽❤️🇬🇧e\u0301一\ufe0eZ" * 4).encode()
+        for columns in (1, 2, 3, 7, 8, 80):
+            for setup in (b"", b"\x1b[?7l", b"\x1b[4h", b"\x1b[?1049h"):
+                with self.subTest(columns=columns, setup=setup):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text)
+
+    def test_wide_runs_match_bytewise_across_line_renditions_and_margins(self):
+        text = ("日本語一\u0301👩\u200d💻abcd" * 5).encode()
+        for columns in (2, 3, 8, 17):
+            setups = (
+                b"\x1b#6",
+                b"\x1b[2;1H\x1b#6\x1b[H",
+                b"\x1b[2;4r\x1b[?6h",
+                b"\x1b[?69h\x1b[2;3s\x1b[?6h",
+            )
+            for setup in setups:
+                with self.subTest(columns=columns, setup=setup):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text)
+
+    def test_wide_runs_match_bytewise_across_batch_boundaries(self):
+        text = ("一" + "a" * 70 + "二" * 40 + "e\u0301👩\u200d💻" + "b" * 65 + "三\u0301").encode()
+        for columns in (3, 7, 80, 132):
+            for setup in (b"", b"\x1b[?7l"):
+                with self.subTest(columns=columns, setup=setup):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text)
+
+    def test_deferred_clusters_match_bytewise_with_malformed_suffixes(self):
+        for cluster in ("一\u0301", "e\u0301", "👩\u200d💻", "❤\ufe0f\ufe0e"):
+            for suffix in (b"\xff" + b"a" * 140, b"\xe0\x80\x80" * 70, b"\xf0\x9f"):
+                text = cluster.encode() + suffix + "二\u0301Z".encode()
+                for columns in (3, 7, 80):
+                    with self.subTest(cluster=cluster, suffix=suffix, columns=columns):
+                        self.assert_wide_stream_matches_bytewise(columns, b"", text)
+
+    def test_deferred_cluster_width_changes_match_bytewise_over_existing_cells(self):
+        text = ("❤\ufe0f\ufe0e一\u0301☀\ufe0e\ufe0f\ufe0e👩\u200d💻Z" * 8).encode()
+        for columns in (2, 3, 4, 7, 80):
+            for offset in (0, 1):
+                setup = ("日本語" * 100).encode() + b"\x1b[H" + b" " * offset
+                with self.subTest(columns=columns, offset=offset):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text)
+
     def test_backspace_does_not_reuse_the_previous_csi_parameter(self):
         with Shitty(columns=20, rows=2) as terminal:
             terminal.write(b"\x1b[10CX\bY")

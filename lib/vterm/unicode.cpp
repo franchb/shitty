@@ -13,6 +13,30 @@ namespace {
     static constexpr u8 wideVs16 = 1 << 1;
     static constexpr u8 virama = 1 << 2;
 
+    // Expand the small deduplicated property dictionary at compile time.
+    // The lookup returns one aligned record instead of unpacking flags
+    // and assembling the return value on every grapheme boundary.
+    struct UnicodePropertyTable {
+        UnicodeCodepointProperties entries[sizeof(generatedUnicodeProperties) / sizeof(generatedUnicodeProperties[0])];
+    };
+
+    static constexpr UnicodePropertyTable unicodeProperties = []() {
+        UnicodePropertyTable result{};
+        for (size_t index = 0; index < sizeof(generatedUnicodeProperties) / sizeof(generatedUnicodeProperties[0]); ++index) {
+            const GeneratedUnicodeProperty& property = generatedUnicodeProperties[index];
+            result.entries[index] = {
+                .category = (GeneralCategory)(property.category),
+                .graphemeClass = (GraphemeClass)(property.graphemeClass),
+                .indicConjunctClass = (IndicConjunctClass)(property.indicClass),
+                .width = property.width,
+                .narrowsWithVs15 = (property.flags & narrowVs15) != 0,
+                .widensWithVs16 = (property.flags & wideVs16) != 0,
+                .virama = (property.flags & virama) != 0,
+            };
+        }
+        return result;
+    }();
+
     template <size_t Size>
     static bool contains(const GeneratedWidthDeltaRange (&ranges)[Size], u32 codepoint) {
         size_t first = 0;
@@ -36,6 +60,7 @@ static_assert((u8)(GraphemeClass::ExtendedPictographic) == 14);
 static_assert((u8)(IndicConjunctClass::None) == 0);
 static_assert((u8)(IndicConjunctClass::Extend) == 3);
 static_assert(sizeof(GeneratedUnicodeProperty) == 5);
+static_assert(sizeof(UnicodeCodepointProperties) == sizeof(u64));
 static_assert(sizeof(generatedUnicodePageIndices) == 0x1100);
 
 UnicodeCodepointProperties unicodeCodepointProperties(u32 codepoint) {
@@ -52,16 +77,7 @@ UnicodeCodepointProperties unicodeCodepointProperties(u32 codepoint) {
     }
     const u32 page = generatedUnicodePageIndices[codepoint / generatedUnicodePageSize];
     const u32 propertyIndex = generatedUnicodePropertyIndices[page * generatedUnicodePageSize + codepoint % generatedUnicodePageSize];
-    const GeneratedUnicodeProperty& property = generatedUnicodeProperties[propertyIndex];
-    return {
-        .category = (GeneralCategory)(property.category),
-        .graphemeClass = (GraphemeClass)(property.graphemeClass),
-        .indicConjunctClass = (IndicConjunctClass)(property.indicClass),
-        .width = property.width,
-        .narrowsWithVs15 = (property.flags & narrowVs15) != 0,
-        .widensWithVs16 = (property.flags & wideVs16) != 0,
-        .virama = (property.flags & virama) != 0,
-    };
+    return unicodeProperties.entries[propertyIndex];
 }
 
 u32 unicodeVersion() {

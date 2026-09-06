@@ -58,7 +58,10 @@ u32 UnicodeWidths::level() const {
 }
 
 CodepointProperties UnicodeWidths::codepointProperties(u32 codepoint) const {
-    const UnicodeCodepointProperties property = unicodeCodepointProperties(codepoint);
+    return codepointProperties(codepoint, unicodeCodepointProperties(codepoint));
+}
+
+CodepointProperties UnicodeWidths::codepointProperties(u32 codepoint, const UnicodeCodepointProperties& property) const {
     int width = property.width;
     if (codepoint >= 0x1160 && codepoint <= 0x11ff) {
         // Medial and trailing Hangul Jamo combine with the leading Jamo and
@@ -86,7 +89,7 @@ CodepointProperties UnicodeWidths::codepointProperties(u32 codepoint) const {
     }
     return {
         .width = (u8)(width),
-        .simpleGrapheme = property.graphemeClass == GraphemeClass::Other && property.indicConjunctClass == IndicConjunctClass::None,
+        .simpleGrapheme = (property.graphemeClass == GraphemeClass::Other || property.graphemeClass == GraphemeClass::HangulLv || property.graphemeClass == GraphemeClass::HangulLvt || property.graphemeClass == GraphemeClass::ExtendedPictographic) && property.indicConjunctClass == IndicConjunctClass::None,
     };
 }
 
@@ -95,12 +98,14 @@ int UnicodeWidths::codepointWidth(u32 codepoint) const {
 }
 
 GraphemeWidthEffect UnicodeWidths::graphemeWidthEffect(u32 previous, u32 codepoint) const {
-    const UnicodeCodepointProperties previousProperties = unicodeCodepointProperties(previous);
-    if (codepoint == 0xfe0f && previousProperties.widensWithVs16) {
-        return GraphemeWidthEffect::Wide;
-    }
-    if (codepoint == 0xfe0e && previousProperties.narrowsWithVs15) {
-        return GraphemeWidthEffect::Narrow;
+    if (codepoint == 0xfe0f || codepoint == 0xfe0e) {
+        const UnicodeCodepointProperties previousProperties = unicodeCodepointProperties(previous);
+        if (codepoint == 0xfe0f && previousProperties.widensWithVs16) {
+            return GraphemeWidthEffect::Wide;
+        }
+        if (codepoint == 0xfe0e && previousProperties.narrowsWithVs15) {
+            return GraphemeWidthEffect::Narrow;
+        }
     }
 
     // Spacing combining marks have positive advance inside a cluster even
@@ -108,7 +113,7 @@ GraphemeWidthEffect UnicodeWidths::graphemeWidthEffect(u32 previous, u32 codepoi
     // stackers are the exception: they request conjunct formation and the
     // following consonant is what widens the cluster.
     const UnicodeCodepointProperties properties = unicodeCodepointProperties(codepoint);
-    if (!properties.virama && (codepointWidth(codepoint) > 0 || properties.category == GeneralCategory::SpacingMark)) {
+    if (!properties.virama && (codepointProperties(codepoint, properties).width > 0 || properties.category == GeneralCategory::SpacingMark)) {
         return GraphemeWidthEffect::Wide;
     }
     return GraphemeWidthEffect::Unchanged;

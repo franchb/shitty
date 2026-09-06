@@ -52,11 +52,11 @@ bool emojiPresentation(u32 codepoint) {
 }
 
 bool GraphemeBreaker::breakBeforeSlow(u32 codepoint, bool simple) {
-    const UnicodeCodepointProperties left = unicodeCodepointProperties((u32)(previous_));
     const UnicodeCodepointProperties right = unicodeCodepointProperties(codepoint);
     GraphemeClass stateClass;
     IndicConjunctClass stateIndic;
     if (state_ == 0) {
+        const UnicodeCodepointProperties left = unicodeCodepointProperties((u32)(previous_));
         stateClass = left.graphemeClass;
         stateIndic = left.indicConjunctClass == IndicConjunctClass::Consonant ? IndicConjunctClass::Consonant : IndicConjunctClass::None;
     } else {

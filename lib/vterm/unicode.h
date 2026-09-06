@@ -69,7 +69,7 @@ enum class IndicConjunctClass : u8 {
     Extend,
 };
 
-struct UnicodeCodepointProperties {
+struct alignas(u64) UnicodeCodepointProperties {
     GeneralCategory category;
     GraphemeClass graphemeClass;
     IndicConjunctClass indicConjunctClass;

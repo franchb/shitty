@@ -51,6 +51,11 @@ public:
     // length, or zero for an empty, truncated, or invalid sequence.
     static size_t decodeOne(const u8* input, size_t length, u32& codepoint);
 
+    // Decodes complete printable scalars up to a control, malformed or
+    // truncated sequence. The caller retains that suffix for streaming
+    // error recovery. Returns the scalar count and the consumed bytes.
+    static size_t decodeRun(const u8* input, size_t length, u32* codepoints, size_t capacity, size_t& consumed);
+
     // Returns true when a truncated sequence was pending; the replacement
     // character is then readable through getUnicode().
     bool checkPrematureEOS();

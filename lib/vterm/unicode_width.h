@@ -10,8 +10,13 @@
 
 #include <stddef.h>
 
+struct UnicodeCodepointProperties;
+
 struct CodepointProperties {
     u8 width;
+    // Every pair in this set has a boundary. Hangul syllables and emoji
+    // bases qualify too: joining Jamo, marks and ZWJ still take the full
+    // breaker, which retains the actual preceding codepoint.
     bool simpleGrapheme;
 };
 
@@ -54,6 +59,8 @@ public:
     u32 level() const;
 
 private:
+    CodepointProperties codepointProperties(u32 codepoint, const UnicodeCodepointProperties& property) const;
+
     u32 level_;
     // One bit per unicodeSpacingFormatControls() entry: whether this
     // system's wcwidth gives that format control a cell.

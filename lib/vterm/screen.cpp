@@ -2553,27 +2553,30 @@ void ScreenBase<Traits>::writeGlyphRun(u16 row, u16 column, const u32* codepoint
     }
     RowSlot& slot = logicalRowSlot(row);
     TerminalCell* const cells = prepareSpan(slot, row, column, cellCount, eraseAttrs);
-    u16 offset = 0;
-    bool wide = false;
+    TerminalCell narrow = linkedAttrs;
+    narrow.drawn = 1;
+    narrow.semantic = semantic;
+    TerminalCell continuation = narrow;
+    continuation.dwidth_cont = 1;
+    narrow.dwidth = 0;
+    TerminalCell wide = narrow;
+    wide.dwidth = 1;
+    TerminalCell* output = cells;
     for (u16 index = 0; index < glyphCount; ++index) {
-        TerminalCell lead = linkedAttrs;
-        lead.uc_pt = codepoints[index];
-        lead.drawn = 1;
-        lead.dwidth = widths[index] == 2;
-        lead.semantic = semantic;
-        cells[offset++] = lead;
-        if (lead.dwidth) {
-            TerminalCell continuation = linkedAttrs;
-            continuation.dwidth_cont = 1;
-            continuation.drawn = 1;
-            continuation.semantic = semantic;
-            cells[offset++] = continuation;
-            wide = true;
+        if (widths[index] == 2) {
+            TerminalCell lead = wide;
+            lead.uc_pt = codepoints[index];
+            *output++ = lead;
+            *output++ = continuation;
+        } else {
+            TerminalCell lead = narrow;
+            lead.uc_pt = codepoints[index];
+            *output++ = lead;
         }
     }
-    STD_ASSERT(offset == cellCount);
+    STD_ASSERT(output == cells + cellCount);
     slot->metadata.protection |= linkedAttrs.protected_char;
-    slot->metadata.wide |= wide;
+    slot->metadata.wide |= cellCount != glyphCount;
 }
 
 template <typename Traits>

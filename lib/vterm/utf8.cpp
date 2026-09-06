@@ -16,44 +16,67 @@
 
 #include "utf8.h"
 
-size_t Utf8Decoder::decodeOne(const u8* input, size_t length, u32& codepoint) {
-    codepoint = 0;
-    if (length == 0) {
-        return 0;
-    }
-    const u8 first = input[0];
-    if (first < 0x80) {
-        codepoint = first;
-        return 1;
-    }
-    size_t count;
-    u32 accumulator;
-    if (first >= 0xc2 && first <= 0xdf) {
-        count = 2;
-        accumulator = first & 0x1f;
-    } else if (first >= 0xe0 && first <= 0xef) {
-        count = 3;
-        accumulator = first & 0x0f;
-    } else if (first >= 0xf0 && first <= 0xf4) {
-        count = 4;
-        accumulator = first & 0x07;
-    } else {
-        return 0;
-    }
-    if (length < count) {
-        return 0;
-    }
-    for (size_t index = 1; index < count; ++index) {
-        const u8 byte = input[index];
-        if ((byte & 0xc0) != 0x80) {
+namespace {
+    static size_t decodeScalar(const u8* input, size_t length, u32& codepoint) {
+        codepoint = 0;
+        if (length == 0) {
             return 0;
         }
-        accumulator = (accumulator << 6) | (byte & 0x3f);
+        const u8 first = input[0];
+        if (first < 0x80) {
+            codepoint = first;
+            return 1;
+        }
+        size_t count;
+        u32 accumulator;
+        if (first >= 0xc2 && first <= 0xdf) {
+            count = 2;
+            accumulator = first & 0x1f;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            count = 3;
+            accumulator = first & 0x0f;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            count = 4;
+            accumulator = first & 0x07;
+        } else {
+            return 0;
+        }
+        if (length < count) {
+            return 0;
+        }
+        for (size_t index = 1; index < count; ++index) {
+            const u8 byte = input[index];
+            if ((byte & 0xc0) != 0x80) {
+                return 0;
+            }
+            accumulator = (accumulator << 6) | (byte & 0x3f);
+        }
+        if ((count == 3 && accumulator < 0x800) || (count == 4 && accumulator < 0x10000) || accumulator > 0x10ffff || (accumulator >= 0xd800 && accumulator <= 0xdfff)) {
+            return 0;
+        }
+        codepoint = accumulator;
+        return count;
     }
-    if ((count == 3 && accumulator < 0x800) || (count == 4 && accumulator < 0x10000) || accumulator > 0x10ffff || (accumulator >= 0xd800 && accumulator <= 0xdfff)) {
-        return 0;
+}
+
+size_t Utf8Decoder::decodeOne(const u8* input, size_t length, u32& codepoint) {
+    return decodeScalar(input, length, codepoint);
+}
+
+size_t Utf8Decoder::decodeRun(const u8* input, size_t length, u32* codepoints, size_t capacity, size_t& consumed) {
+    consumed = 0;
+    size_t count = 0;
+    while (count < capacity && consumed < length) {
+        if (input[consumed] < 0x20 || input[consumed] == 0x7f) {
+            break;
+        }
+        const size_t bytes = decodeScalar(input + consumed, length - consumed, codepoints[count]);
+        if (bytes == 0) {
+            break;
+        }
+        consumed += bytes;
+        ++count;
     }
-    codepoint = accumulator;
     return count;
 }
 

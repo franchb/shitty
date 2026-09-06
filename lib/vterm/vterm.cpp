@@ -57,10 +57,10 @@
 #include <std/ios/output.h>
 #include <std/lib/buffer.h>
 #include <std/lib/vector.h>
-#include <std/ios/fs_utils.h>
 #include <std/ptr/scoped.h>
 #include <std/str/builder.h>
 #include <std/thr/runable.h>
+#include <std/ios/fs_utils.h>
 #include <std/mem/obj_pool.h>
 #include <std/rng/split_mix_64.h>
 #include <std/mem/small_obj_allocator.h>
@@ -72,6 +72,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+
 #ifdef __APPLE__
     #include <libproc.h>
 #endif
@@ -640,7 +641,7 @@ namespace {
         void inputGraphicChar(unsigned char ch);
         void placeGraphicChar();
         void placeGraphicChar(bool graphemeBoundary);
-        void placeGraphicChar(bool graphemeBoundary, u8 width);
+        void placeGraphicChar(bool graphemeBoundary, u8 width, bool deferWrite = false);
         void placeRepeatedCodepoint(u32 codepoint, u32 count);
         template <bool insert>
         void placeAsciiRun(const u8* input, size_t size);
@@ -4007,7 +4008,7 @@ void VtermImpl::resetGraphemeInput() {
     inputGraphemeScreen = nullptr;
 }
 
-u8 VtermImpl::codepointData(u32 codepoint) {
+[[gnu::always_inline]] inline u8 VtermImpl::codepointData(u32 codepoint) {
     constexpr u8 valid = 0x80;
     constexpr u8 simple = 0x04;
     u8& cached = (*unicodeProperties)[codepoint];
@@ -4031,7 +4032,7 @@ void VtermImpl::placeGraphicChar(bool graphemeBoundary) {
     placeGraphicChar(graphemeBoundary, codepointData(utf8dec.getUnicode()) & 0x03);
 }
 
-void VtermImpl::placeGraphicChar(bool graphemeBoundary, u8 width) {
+void VtermImpl::placeGraphicChar(bool graphemeBoundary, u8 width, bool deferWrite) {
     u32 pt = utf8dec.getUnicode();
     u8 w = width;
     bool advanceCursor = true;
@@ -4115,7 +4116,9 @@ void VtermImpl::placeGraphicChar(bool graphemeBoundary, u8 width) {
             case GraphemeWidthEffect::Unchanged:
                 break;
         }
-        cf->writeGrapheme(targetY, targetX, inputGrapheme.data(), inputGrapheme.size(), wide, inputGraphemeAttrs, inputGraphemeHyperlink, inputGraphemeSemantic, eraseAttrs);
+        if (!deferWrite) {
+            cf->writeGrapheme(targetY, targetX, inputGrapheme.data(), inputGrapheme.size(), wide, inputGraphemeAttrs, inputGraphemeHyperlink, inputGraphemeSemantic, eraseAttrs);
+        }
         inputGraphemeX = targetX;
         inputGraphemeY = targetY;
         inputGraphemeWide = wide;
@@ -4166,7 +4169,9 @@ void VtermImpl::placeGraphicChar(bool graphemeBoundary, u8 width) {
         // bounded by the scrolling margins the way the ICH control is.
         cf->insertCells(posY, posX, lineCols, wide ? 2 : 1, eraseAttrs);
     }
-    cf->writeCodepoint(posY, posX, pt, wide, attrs, activeHyperlink, currentSemantic, eraseAttrs);
+    if (!deferWrite) {
+        cf->writeCodepoint(posY, posX, pt, wide, attrs, activeHyperlink, currentSemantic, eraseAttrs);
+    }
     if (attrs.blink) {
         enableBlinkingText();
     }
@@ -4386,11 +4391,28 @@ int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
     u8 widths[batchLimit];
     size_t batchCount = 0;
     bool batchWide = false;
+    size_t batchExtraCells = 0;
+    size_t batchColumns = 0;
+    const bool wideWrapSafe = autoWrapMode && hMargin == 0 && nColsEff == geometry.columns && geometry.columns >= 4;
+    bool clusterPending = false;
+    bool clusterTouchedWide = false;
     int consumed = 0;
 
     if (inputGraphemeScreen != cf) {
         inputGraphemeBreaker.reset();
     }
+    const auto flushCluster = [&]() {
+        if (!clusterPending) {
+            return;
+        }
+        if (clusterTouchedWide && !inputGraphemeWide) {
+            cf->eraseCells(inputGraphemeY, inputGraphemeX + 1, 1, eraseAttrs);
+        }
+        const u32* codepoints = inputGrapheme.empty() ? &inputGraphemeBase : inputGrapheme.data();
+        const size_t count = inputGrapheme.empty() ? 1 : inputGrapheme.size();
+        cf->writeGrapheme(inputGraphemeY, inputGraphemeX, codepoints, count, inputGraphemeWide, inputGraphemeAttrs, inputGraphemeHyperlink, inputGraphemeSemantic, eraseAttrs);
+        clusterPending = false;
+    };
     const auto flush = [&]() {
         if (batchCount != 0) {
             if (batchWide) {
@@ -4398,35 +4420,84 @@ int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
             } else {
                 placePreparedRun<false>(batch, widths, batchCount);
             }
-            batchCount = 0;
-            batchWide = false;
         }
+        batchCount = 0;
+        batchWide = false;
+        batchExtraCells = 0;
     };
     const auto place = [&](u32 codepoint, int advance) __attribute__((always_inline)) {
         const u8 data = codepointData(codepoint);
         const bool boundary = inputGraphemeBreaker.breakBefore(codepoint, (data & 0x04) != 0);
         const u8 width = data & 0x03;
+        if (boundary) {
+            flushCluster();
+        }
         if (!boundary || width == 0) {
-            flush();
+            if (!boundary && batchCount != 0 && !insertMode) {
+                // The last independent glyph turned out to start a
+                // cluster. Commit its prefix, then evolve the cluster's
+                // cursor state without materializing every intermediate
+                // spelling. Two free columns keep all width transitions
+                // on this row; margins and insertion use eager writes.
+                const u32 base = batch[--batchCount];
+                const u8 baseWidth = widths[batchCount];
+                flush();
+                u16 lineBegin, lineCols;
+                activeLine(lineBegin, lineCols);
+                clusterPending = !lastCol && posX + 2 <= lineCols;
+                utf8dec.setUnicode(base);
+                placeGraphicChar(true, baseWidth, clusterPending);
+                clusterTouchedWide = inputGraphemeWide;
+            } else {
+                flush();
+            }
             utf8dec.setUnicode(codepoint);
-            placeGraphicChar(boundary, width);
+            placeGraphicChar(boundary, width, clusterPending);
+            clusterTouchedWide |= inputGraphemeWide;
             consumed += advance;
             return;
         }
         if (batchCount == batchLimit) {
             flush();
         }
+        if (width == 2 && !wideWrapSafe && !batchWide) {
+            u16 lineBegin, lineCols;
+            activeLine(lineBegin, lineCols);
+            batchColumns = posX < lineCols && !(autoWrapMode && lastCol) ? lineCols - posX : 0;
+        }
         batch[batchCount] = codepoint;
         widths[batchCount++] = width;
         batchWide |= width == 2;
         consumed += advance;
-        // A wide glyph can be discarded after wrapping into a narrow or
-        // double-width row.  That resets grapheme state, so commit it before
-        // determining the boundary of the following codepoint.
-        if (width == 2) {
-            flush();
+        // Wide glyphs that fit on this row cannot reset grapheme state,
+        // so keep them in the same span write. Once a wide glyph crosses
+        // its boundary, commit before looking at the next codepoint: the
+        // destination can be a narrow or double-width row that discards
+        // the glyph and resets the breaker.
+        if (width == 2 && !wideWrapSafe) {
+            ++batchExtraCells;
+            if (batchCount + batchExtraCells > batchColumns) {
+                flush();
+            }
         }
     };
+
+    // Valid text is decoded a scalar at a time into bounded blocks. The
+    // byte DFA below owns only the malformed or incomplete suffix, where
+    // its exact replacement and trace semantics are needed.
+    u32 decoded[batchLimit];
+    const bool validLead = size >= 2 && input[0] >= 0xc2 && input[0] <= 0xf4 && (input[1] & 0xc0) == 0x80;
+    while (validLead && consumed < size) {
+        size_t bytes = 0;
+        const size_t count = Utf8Decoder::decodeRun(input + consumed, size - consumed, decoded, batchLimit, bytes);
+        for (size_t index = 0; index < count; ++index) {
+            place(decoded[index], 0);
+        }
+        consumed += bytes;
+        if (count < batchLimit) {
+            break;
+        }
+    }
 
     u8 state = Utf8Dfa::Ground;
     u32 codepoint = 0;
@@ -4483,10 +4554,13 @@ int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
             }
             continue;
         }
+        const unsigned count = action & Utf8Dfa::CountMask;
+        if (count != 0) {
+            flushCluster();
+        }
         if (batchCount >= batchLimit - 2) {
             flush();
         }
-        const unsigned count = action & Utf8Dfa::CountMask;
         const u32 first = (action & Utf8Dfa::FirstByte) ? byte : Unicode_Replacement_Character;
         const u32 second = (action & Utf8Dfa::SecondByte) ? byte : Unicode_Replacement_Character;
         batch[batchCount] = first;
@@ -4507,6 +4581,7 @@ int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
     }
     pendingTrace = Utf8Dfa::pending[state];
     syncBreaker();
+    flushCluster();
     flush();
     return consumed;
 }
