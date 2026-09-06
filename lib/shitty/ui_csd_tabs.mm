@@ -154,6 +154,7 @@ namespace {
         void tabClosed(size_t index);
         void tabOpened();
         NSWindow* nativeWindow() const;
+        bool fullscreen() const;
         TabLayout layout(CGFloat width) const;
         WellStyle style(NSAppearance* appearance) const;
         CGFloat bezelWidth() const;
@@ -185,7 +186,7 @@ namespace {
         // two seam lines under the title bar. Owned through bezelViews;
         // the typed pointers place and restyle them.
         NSMutableArray<NSView*>* bezelViews = nil;
-        id frameObserver = nil;
+        id bezelObservers[3] = {};
         u16 bezelBorder = 0;
         CsdHairlineView* strips[3] = {};
         CsdHairlineView* sideLines[3][3] = {};
@@ -278,6 +279,10 @@ NSWindow* CsdTabsUi::nativeWindow() const {
     return (__bridge NSWindow*)(composer.window->renderContext().window);
 }
 
+bool CsdTabsUi::fullscreen() const {
+    return (nativeWindow().styleMask & NSWindowStyleMaskFullScreen) != 0;
+}
+
 TabLayout CsdTabsUi::layout(CGFloat width) const {
     TabLayout result;
     result.left = tabsLeft;
@@ -347,7 +352,7 @@ CGFloat CsdTabsUi::windowCornerRadius() const {
     const SEL accessor = NSSelectorFromString(@"_cornerRadius");
     for (id candidate in @[ frame, window ]) {
         if ([candidate respondsToSelector:accessor]) {
-            const CGFloat radius = ((CGFloat(*)(id, SEL))(objc_msgSend))(candidate, accessor);
+            const CGFloat radius = ((CGFloat (*)(id, SEL))(objc_msgSend))(candidate, accessor);
             if (radius > 0) {
                 return radius;
             }
@@ -592,17 +597,29 @@ void CsdTabsUi::installBezel(NSWindow* window) {
     // with the window width; every other frame is replaced along with
     // them, in the same transaction as the content view's own resize.
     content.postsFrameChangedNotifications = YES;
-    frameObserver = [[NSNotificationCenter.defaultCenter addObserverForName:NSViewFrameDidChangeNotification object:content queue:nil usingBlock:^(NSNotification* note) {
-      (void)note;
-      placeBezel();
-    }] retain];
+    const auto observe = [&](NSString* name, id object) {
+        return [[NSNotificationCenter.defaultCenter addObserverForName:name
+                                                                object:object
+                                                                 queue:nil
+                                                            usingBlock:^(NSNotification* note) {
+                                                              (void)note;
+                                                              placeBezel();
+                                                            }] retain];
+    };
+    bezelObservers[0] = observe(NSViewFrameDidChangeNotification, content);
+    // The style mask may change after the last content resize during
+    // a fullscreen transition; repaint once AppKit has settled it.
+    bezelObservers[1] = observe(NSWindowDidEnterFullScreenNotification, window);
+    bezelObservers[2] = observe(NSWindowDidExitFullScreenNotification, window);
 }
 
 void CsdTabsUi::removeBezel() {
-    if (frameObserver != nil) {
-        [NSNotificationCenter.defaultCenter removeObserver:frameObserver];
-        [frameObserver release];
-        frameObserver = nil;
+    for (id& observer : bezelObservers) {
+        if (observer != nil) {
+            [NSNotificationCenter.defaultCenter removeObserver:observer];
+            [observer release];
+            observer = nil;
+        }
     }
     for (NSView* view in bezelViews) {
         [view removeFromSuperview];
@@ -625,6 +642,15 @@ void CsdTabsUi::removeBezel() {
 void CsdTabsUi::placeBezel() {
     NSWindow* const window = nativeWindow();
     if (window == nil || bezelViews == nil) {
+        return;
+    }
+    const bool edgeToEdge = fullscreen();
+    for (NSView* view in bezelViews) {
+        view.hidden = edgeToEdge;
+    }
+    bar.needsDisplay = YES;
+    seam.needsDisplay = YES;
+    if (edgeToEdge) {
         return;
     }
     const NSRect bounds = window.contentView.bounds;
@@ -779,8 +805,9 @@ namespace {
         // With a rim the seam starts and ends where the well's rounded top
         // corners come up to it; the curve itself lies mostly below the
         // seam, drawn by the corner views, and only the outer half of the
-        // strokes shows up here. Without a rim the seam spans the bar.
-        const CGFloat bezel = owner->bezelWidth();
+        // strokes shows up here. Without a rim, including fullscreen,
+        // the seam spans the bar all the way to the window edges.
+        const CGFloat bezel = owner->fullscreen() ? 0 : owner->bezelWidth();
         const CGFloat corner = bezel >= 1 ? csdTabFillet : 0;
         const CGFloat width = bounds.size.width;
         NSBezierPath* const outline = [NSBezierPath bezierPath];
