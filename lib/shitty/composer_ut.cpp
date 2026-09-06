@@ -124,6 +124,8 @@ STD_TEST_SUITE(Composer) {
         STD_INSIST(listener.rows == 4);
         STD_INSIST(listener.pixelWidth == width);
         STD_INSIST(listener.pixelHeight == height);
+        STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels + 1);
+        STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels + 3);
 
         composer.geometry.resize(width, height, composer.host);
 
@@ -133,24 +135,21 @@ STD_TEST_SUITE(Composer) {
 
         STD_INSIST(listener.calls == 2);
         STD_INSIST(listener.columns == 10);
-        STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels);
-        STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels);
-
-        // Centered, the grid takes half of the 4 and 7 spare pixels as
-        // its origin; asking again changes nothing, and the change of
-        // origin alone is a resize the host hears about.
-        composer.geometry.centerRemainder = true;
-        composer.geometry.resize(width + 1, height, composer.host);
-
-        STD_INSIST(listener.calls == 3);
-        STD_INSIST(composer.geometry.columns == 10);
         STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels + 2);
         STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels + 3);
 
         composer.geometry.resize(width + 1, height, composer.host);
 
-        STD_INSIST(listener.calls == 3);
+        STD_INSIST(listener.calls == 2);
         STD_INSIST(listener.pixelWidth == width + 1);
+
+        composer.geometry.resize(width - 3, height - 7, composer.host);
+
+        STD_INSIST(listener.calls == 3);
+        STD_INSIST(listener.columns == 10);
+        STD_INSIST(listener.rows == 4);
+        STD_INSIST(composer.geometry.originX == composer.geometry.borderPixels);
+        STD_INSIST(composer.geometry.originY == composer.geometry.borderPixels);
     }
 
     STD_TEST(PublishesCellExtraReplacement) {

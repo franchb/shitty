@@ -37,11 +37,8 @@ struct VtGeometry {
     u16 borderPixels = 0;
     // Where the grid's first cell starts, in physical pixels: the
     // border, plus half of what the pixel size leaves over beyond whole
-    // cells when the embedder asks for the grid centered. A canvas the
-    // embedder does not size itself - a full screen, a maximized frame,
-    // a compositor's tile - is rarely a whole number of cells, and the
-    // leftover reads better split than piled on the right and bottom.
+    // cells. The grid is always centered; when the canvas fits whole
+    // cells exactly, its origin is just the border.
     u16 originX = 0;
     u16 originY = 0;
-    bool centerRemainder = false;
 };

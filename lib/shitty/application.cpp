@@ -61,8 +61,8 @@
 #include <plt/input.h>
 #include <plt/mutex.h>
 #include <sys/types.h>
-#include <plt/window.h>
 #include <plt/poller.h>
+#include <plt/window.h>
 #include <plt/platform.h>
 
 using namespace stl;
@@ -503,10 +503,6 @@ void ApplicationImpl::updateWindowInfo(const plt::WindowInfo& info) {
     }
     const u16 previousColumns = composer.geometry.columns;
     const u16 previousRows = composer.geometry.rows;
-    // A canvas that is not ours to size - the screen, the maximized
-    // frame, a tiler's slot - is rarely a whole number of cells; the grid
-    // sits centered in it. A window we size ourselves snaps to cells.
-    composer.geometry.centerRemainder = info.fullscreen || info.maximized || info.tiled;
     composer.geometry.resize((u16)(min(info.width, (u32)(UINT16_MAX))), (u16)(min(info.height, (u32)(UINT16_MAX))), composer.host);
     if (composer.debugFd >= 0 && (composer.geometry.columns != previousColumns || composer.geometry.rows != previousRows)) {
         StringBuilder line;
