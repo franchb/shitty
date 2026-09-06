@@ -38,6 +38,12 @@ struct ScreenFrame {
     u32 viewOffset = 0;
 };
 
+// Consecutive codepoints in a prepared row span, grouped into cells.
+struct ScreenGrapheme {
+    u8 count;
+    u8 width;
+};
+
 // One view row as the render side sees it: the cells, and an identity
 // that never repeats - fresh from a global sequence whenever the row's
 // cells become writable, moving with the row through scrolls. Whatever
@@ -120,6 +126,7 @@ struct Screen {
     virtual void writeRun(u16 row, u16 column, const u32* codepoints, u16 count, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) = 0;
     virtual void writeRepeatedCodepoint(u16 row, u16 column, u16 count, u32 codepoint, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) = 0;
     virtual void writeGlyphRun(u16 row, u16 column, const u32* codepoints, const u8* widths, u16 glyphCount, u16 cellCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) = 0;
+    virtual void writeGraphemeRun(u16 row, u16 column, const u32* codepoints, const ScreenGrapheme* graphemes, u16 count, u16 cellCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) = 0;
     // patches holds count consecutive SixelPatch::pixelCount blocks;
     // an all-transparent patch leaves a plain blank cell without an
     // extra. palette must already be interned in the cell extra store.

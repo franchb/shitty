@@ -102,6 +102,32 @@ class ParserStreamingTest(unittest.TestCase):
                 with self.subTest(columns=columns, offset=offset):
                     self.assert_wide_stream_matches_bytewise(columns, setup, text)
 
+    def test_grapheme_spans_match_bytewise_with_attributes_and_long_clusters(self):
+        text = ("日本語 e\u0301 👩\u200d💻 👍🏽 ❤️ 🇬🇧 क्\u200dष " + "一" + "\u0301" * 30 + "Z").encode()
+        setups = (
+            b"\x1b[1;3;4;31m\x1b]8;;https://example.com\x1b\\",
+            b"\x1b[?2027l",
+            ("日本語" * 100).encode() + b"\x1b[H",
+        )
+        for columns in (3, 7, 80, 132):
+            for setup in setups:
+                with self.subTest(columns=columns, setup=setup):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text * 4)
+
+    def test_grapheme_spans_expose_and_extend_the_last_cluster_at_every_byte_split(self):
+        text = "日本語 e\u0301 👩\u200d💻 👍🏽 ❤️ 🇬🇧 一\ufe0e\ufe0fZ".encode()
+        for columns in (7, 80):
+            for split in range(1, len(text)):
+                with self.subTest(columns=columns, split=split):
+                    with Shitty(columns=columns, rows=4) as batched, Shitty(columns=columns, rows=4) as scalar:
+                        for part in (text[:split], text[split:], "\u0301X".encode()):
+                            batched.write(part)
+                            scalar.write_chunks(*(bytes([byte]) for byte in part))
+                            actual = batched.snapshot()
+                            expected = scalar.snapshot()
+                            actual.refresh_count = expected.refresh_count = 0
+                            self.assertEqual(actual, expected)
+
     def test_backspace_does_not_reuse_the_previous_csi_parameter(self):
         with Shitty(columns=20, rows=2) as terminal:
             terminal.write(b"\x1b[10CX\bY")

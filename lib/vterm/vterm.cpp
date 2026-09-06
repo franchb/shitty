@@ -647,6 +647,7 @@ namespace {
         void placeAsciiRun(const u8* input, size_t size);
         size_t placeAsciiLines(const u8* input, size_t size);
         int placeUtf8Run(const u8* input, int size, u8& pendingTrace);
+        size_t placeGraphemeRun(const u32* codepoints, size_t count);
         template <bool hasWide>
         void placePreparedRun(const u32* input, const u8* widths, size_t size);
         u8 codepointData(u32 codepoint);
@@ -4380,11 +4381,140 @@ void VtermImpl::placeRepeatedCodepoint(u32 codepoint, u32 count) {
     }
 }
 
-// Decodes UTF-8 ahead and batches independent glyphs into span writes.
-// Joining codepoints fall back to the standard cluster path.  Invalid bytes
-// become replacement characters in the same batch, mirroring the streaming
-// decoder's rules exactly; only a sequence split across the chunk boundary
-// stops the run so the streaming decoder can carry its state across feeds.
+// Assemble clusters before touching the screen. Only monotonic width
+// transitions that fit on this row are admitted: shrinking can erase a
+// neighbour outside the final span, and wrapping can relocate a cluster.
+// Those clusters are replayed by the scalar path, with the breaker restored
+// to their starting state. A feed's last cluster is displayed immediately;
+// inputGrapheme retains its spelling for extensions in the next feed.
+[[gnu::noinline]] size_t VtermImpl::placeGraphemeRun(const u32* codepoints, size_t count) {
+    if (lastCol) {
+        return 0;
+    }
+    u16 lineBegin, lineCols;
+    activeLine(lineBegin, lineCols);
+    if (posX >= lineCols) {
+        return 0;
+    }
+    constexpr size_t capacity = 64;
+    STD_ASSERT(count <= capacity);
+    ScreenGrapheme graphemes[capacity];
+    u8 widths[capacity];
+    GraphemeBreaker breaker = inputGraphemeBreaker;
+    GraphemeBreaker clusterStart = breaker;
+    const u16 available = lineCols - posX;
+    u16 glyphCount = 0;
+    u16 cellCount = 0;
+    size_t consumed = 0;
+    bool rowFull = false;
+    bool hasWide = false;
+    // Most runs consist entirely of independent glyphs. Collect their
+    // widths without cluster checkpoints; only materialize descriptors
+    // when a joining sequence actually needs them.
+    if (breaker.simpleBoundary()) {
+        while (consumed < count) {
+            const u8 data = codepointData(codepoints[consumed]);
+            const u8 width = data & 0x03;
+            if ((data & 0x04) == 0 || width == 0) {
+                break;
+            }
+            if (cellCount + width > available) {
+                rowFull = true;
+                break;
+            }
+            widths[consumed++] = width;
+            cellCount += width;
+            hasWide |= width == 2;
+        }
+        if (consumed != 0) {
+            breaker.setBoundaryAfter(codepoints[consumed - 1], true);
+        }
+    }
+    const bool clustered = consumed < count && !rowFull;
+    glyphCount = consumed;
+    if (clustered) {
+        for (size_t index = 0; index < consumed; ++index) {
+            graphemes[index] = {1, widths[index]};
+        }
+        if (consumed > 1) {
+            clusterStart.setBoundaryAfter(codepoints[consumed - 2], true);
+        }
+    }
+    while (clustered && consumed < count) {
+        const u32 codepoint = codepoints[consumed];
+        const u8 data = codepointData(codepoint);
+        const GraphemeBreaker before = breaker;
+        if (breaker.breakBefore(codepoint, (data & 0x04) != 0)) {
+            const u8 width = data & 0x03;
+            if (width == 0 || cellCount + width > available) {
+                breaker = before;
+                break;
+            }
+            clusterStart = before;
+            graphemes[glyphCount++] = {1, width};
+            cellCount += width;
+        } else {
+            if (glyphCount == 0) {
+                return 0;
+            }
+            ScreenGrapheme& grapheme = graphemes[glyphCount - 1];
+            const GraphemeWidthEffect effect = graphemeClusterMode ? config().widths.graphemeWidthEffect(codepoints[consumed - 1], codepoint) : GraphemeWidthEffect::Unchanged;
+            const bool grows = effect == GraphemeWidthEffect::Wide && grapheme.width == 1;
+            if (grapheme.count == GraphemeBuffer::capacity || (effect == GraphemeWidthEffect::Narrow && grapheme.width == 2) || (grows && cellCount == available)) {
+                consumed -= grapheme.count;
+                cellCount -= grapheme.width;
+                --glyphCount;
+                breaker = clusterStart;
+                break;
+            }
+            ++grapheme.count;
+            grapheme.width += grows;
+            cellCount += grows;
+        }
+        ++consumed;
+    }
+    if (glyphCount == 0) {
+        return 0;
+    }
+    if (clustered) {
+        cf->writeGraphemeRun(posY, posX, codepoints, graphemes, glyphCount, cellCount, attrs, activeHyperlink, currentSemantic, eraseAttrs);
+    } else if (hasWide) {
+        cf->writeGlyphRun(posY, posX, codepoints, widths, glyphCount, cellCount, attrs, activeHyperlink, currentSemantic, eraseAttrs);
+    } else {
+        cf->writeRun(posY, posX, codepoints, glyphCount, attrs, activeHyperlink, currentSemantic, eraseAttrs);
+    }
+    const ScreenGrapheme last = clustered ? graphemes[glyphCount - 1] : ScreenGrapheme{1, widths[glyphCount - 1]};
+    const size_t lastStart = consumed - last.count;
+    inputGrapheme.clear();
+    if (last.count != 1) {
+        for (size_t index = lastStart; index < consumed; ++index) {
+            inputGrapheme.pushBack(codepoints[index]);
+        }
+    }
+    inputGraphemeBase = codepoints[lastStart];
+    inputGraphemeScreen = cf;
+    inputGraphemeX = posX + cellCount - last.width;
+    inputGraphemeY = posY;
+    inputGraphemeWide = last.width == 2;
+    inputGraphemeAttrs = attrs;
+    inputGraphemeHyperlink = activeHyperlink;
+    inputGraphemeSemantic = currentSemantic;
+    inputGraphemeBreaker = breaker;
+    utf8dec.setUnicode(codepoints[consumed - 1]);
+    posX += cellCount;
+    lastCol = posX == lineCols;
+    posX -= lastCol;
+    if (attrs.blink) {
+        enableBlinkingText();
+    }
+    return consumed;
+}
+
+// Decode valid text into row spans of complete graphemes. Insertion and
+// cluster transitions that cannot stay in the span use scalar placement.
+// Invalid bytes become replacement characters in the fallback batch,
+// mirroring the streaming decoder's rules; incomplete sequences are left
+// for that decoder to carry across feeds.
 int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
     constexpr size_t batchLimit = 64;
     u32 batch[batchLimit];
@@ -4490,8 +4620,25 @@ int VtermImpl::placeUtf8Run(const u8* input, int size, u8& pendingTrace) {
     while (validLead && consumed < size) {
         size_t bytes = 0;
         const size_t count = Utf8Decoder::decodeRun(input + consumed, size - consumed, decoded, batchLimit, bytes);
-        for (size_t index = 0; index < count; ++index) {
-            place(decoded[index], 0);
+        if (insertMode || count < 2) {
+            for (size_t index = 0; index < count; ++index) {
+                place(decoded[index], 0);
+            }
+            consumed += bytes;
+            if (count < batchLimit) {
+                break;
+            }
+            continue;
+        }
+        for (size_t index = 0; index < count;) {
+            const size_t written = placeGraphemeRun(decoded + index, count - index);
+            if (written != 0) {
+                index += written;
+                continue;
+            }
+            place(decoded[index++], 0);
+            flushCluster();
+            flush();
         }
         consumed += bytes;
         if (count < batchLimit) {

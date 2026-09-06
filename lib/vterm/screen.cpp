@@ -192,6 +192,7 @@ namespace {
         void writeRun(u16 row, u16 column, const u32* codepoints, u16 count, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
         void writeRepeatedCodepoint(u16 row, u16 column, u16 count, u32 codepoint, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
         void writeGlyphRun(u16 row, u16 column, const u32* codepoints, const u8* widths, u16 glyphCount, u16 cellCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
+        void writeGraphemeRun(u16 row, u16 column, const u32* codepoints, const ScreenGrapheme* graphemes, u16 count, u16 cellCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) override;
         void fillRectangle(u16 top, u16 left, u16 bottom, u16 right, u32 codepoint, const TerminalCell& attrs, const TerminalCell& eraseAttrs) override;
         void copyRectangle(u16 sourceTop, u16 sourceLeft, u16 targetTop, u16 targetLeft, u16 height, u16 width, const TerminalCell& eraseAttrs) override;
         void changeRectangleAttributes(u16 top, u16 left, u16 bottom, u16 right, CellAttributeChange change) override;
@@ -2577,6 +2578,41 @@ void ScreenBase<Traits>::writeGlyphRun(u16 row, u16 column, const u32* codepoint
     STD_ASSERT(output == cells + cellCount);
     slot->metadata.protection |= linkedAttrs.protected_char;
     slot->metadata.wide |= cellCount != glyphCount;
+}
+
+template <typename Traits>
+void ScreenBase<Traits>::writeGraphemeRun(u16 row, u16 column, const u32* codepoints, const ScreenGrapheme* graphemes, u16 count, u16 cellCount, const TerminalCell& attrs, u32 hyperlink, u32 semantic, const TerminalCell& eraseAttrs) {
+    CellExtraStore& extras = cellExtras();
+    TerminalCell linkedAttrs = attrs;
+    if (hyperlink != 0 || linkedAttrs.hasExtra()) {
+        extras.setHyperlink(linkedAttrs, hyperlink);
+    }
+    linkedAttrs.drawn = 1;
+    linkedAttrs.semantic = semantic;
+    TerminalCell continuation = linkedAttrs;
+    continuation.dwidth_cont = 1;
+    linkedAttrs.dwidth = 0;
+    TerminalCell wide = linkedAttrs;
+    wide.dwidth = 1;
+    RowSlot& slot = logicalRowSlot(row);
+    TerminalCell* const cells = prepareSpan(slot, row, column, cellCount, eraseAttrs);
+    TerminalCell* output = cells;
+    for (u16 index = 0; index < count; ++index) {
+        const ScreenGrapheme grapheme = graphemes[index];
+        TerminalCell lead = grapheme.width == 2 ? wide : linkedAttrs;
+        lead.uc_pt = codepoints[0];
+        if (grapheme.count != 1) {
+            extras.setGrapheme(lead, codepoints, grapheme.count);
+        }
+        *output++ = lead;
+        if (grapheme.width == 2) {
+            *output++ = continuation;
+        }
+        codepoints += grapheme.count;
+    }
+    STD_ASSERT(output == cells + cellCount);
+    slot->metadata.protection |= linkedAttrs.protected_char;
+    slot->metadata.wide |= cellCount != count;
 }
 
 template <typename Traits>
