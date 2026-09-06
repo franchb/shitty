@@ -481,20 +481,6 @@ parser_test = command(
 )
 
 
-utf8_dfa = command(
-    name="utf8_dfa",
-    inputs=["$(S)/lib/vterm/generate_utf8_dfa.py"],
-    outputs=["$(B)/utf8_dfa.h"],
-    cmd=[
-        "python3",
-        "$(S)/lib/vterm/generate_utf8_dfa.py",
-        "$(B)/utf8_dfa.h",
-    ],
-    descr="DF",
-    color="magenta",
-)
-
-
 input_keys = command(
     name="input_keys",
     inputs=["$(S)/lib/shitty/generate_input_keys.py", "$(S)/ext/plt/input.h"],
@@ -690,9 +676,6 @@ libshitty_sources = [
         "inputs": ["$(B)/toml.rl.h"],
     } if source == toml_source else {
         "src": source,
-        "inputs": ["$(B)/utf8_dfa.h"],
-    } if source == vterm_source else {
-        "src": source,
         "inputs": ["$(B)/font_data.h", "$(B)/font_coverage.h"],
     } if source == font_embedded_source else {
         "src": source,
@@ -711,9 +694,6 @@ libshitty_test_sources = [
         "src": source,
         "inputs": ["$(B)/toml.rl.h"],
     } if source == toml_source else {
-        "src": source,
-        "inputs": ["$(B)/utf8_dfa.h"],
-    } if source == vterm_source else {
         "src": source,
         "inputs": ["$(B)/font_data.h", "$(B)/font_coverage.h"],
     } if source == font_embedded_source else {
@@ -965,9 +945,6 @@ embed_sources = [
         "src": source,
         "inputs": ["$(B)/parser.rl.h"],
     } if source == parser_source else {
-        "src": source,
-        "inputs": ["$(B)/utf8_dfa.h"],
-    } if source == vterm_source else {
         "src": source,
         "inputs": ["$(B)/unicode_data.h"],
     } if source == unicode_source else source

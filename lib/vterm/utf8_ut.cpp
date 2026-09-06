@@ -121,6 +121,44 @@ STD_TEST_SUITE(Utf8) {
         STD_INSIST(!decoder.checkPrematureEOS());
     }
 
+    STD_TEST(TextBlockRetainsBoundariesWithoutSplittingWrites) {
+        static constexpr u8 input[] = {0xff, 'A', 0, 'B', 1, 0x80, 0xc2, 0x80, 2};
+        Utf8Decoder decoder;
+        Utf8Text text;
+        STD_INSIST(decoder.decodeText(input, sizeof(input), text) == sizeof(input));
+        STD_INSIST(text.count == 5);
+        STD_INSIST(text.codepoints[0] == Unicode_Replacement_Character);
+        STD_INSIST(text.codepoints[1] == 'A');
+        STD_INSIST(text.codepoints[2] == 'B');
+        STD_INSIST(text.codepoints[3] == Unicode_Replacement_Character);
+        STD_INSIST(text.codepoints[4] == 0x80);
+        STD_INSIST(text.resetBefore == ((1u << 2) | (1u << 3)));
+        STD_INSIST(text.resetAfter);
+    }
+
+    STD_TEST(TextBlockCarriesIncompleteSequencesAndIgnoresDel) {
+        static constexpr u8 partial[] = {0xff, 0xe2, 0x82, 0};
+        Utf8Decoder decoder;
+        Utf8Text text;
+        STD_INSIST(decoder.decodeText(partial, sizeof(partial), text) == sizeof(partial));
+        STD_INSIST(text.count == 2);
+        STD_INSIST(text.codepoints[1] == Unicode_Replacement_Character);
+        STD_INSIST(text.resetAfter);
+        STD_INSIST(text.pendingTrace == 1);
+        static constexpr u8 complete[] = {0xe2, 0x7f, 0x82, 0xac, '\n'};
+        STD_INSIST(decoder.decodeText(complete, sizeof(complete), text) == 4);
+        STD_INSIST(text.count == 1);
+        STD_INSIST(text.codepoints[0] == 0x20ac);
+        static constexpr u8 head[] = {0xf0, 0x9f};
+        STD_INSIST(decoder.decodeText(head, sizeof(head), text) == 2);
+        STD_INSIST(text.count == 0);
+        STD_INSIST(decoder.expectsContinuation());
+        static constexpr u8 tail[] = {0x91, 0xa9};
+        STD_INSIST(decoder.decodeText(tail, sizeof(tail), text) == 2);
+        STD_INSIST(text.count == 1);
+        STD_INSIST(text.codepoints[0] == 0x1f469);
+    }
+
     STD_TEST(DecoderResetAndDirectUnicode) {
         Utf8Decoder decoder;
         decoder.pushByte(0xe2);

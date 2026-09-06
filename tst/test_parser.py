@@ -128,6 +128,32 @@ class ParserStreamingTest(unittest.TestCase):
                             actual.refresh_count = expected.refresh_count = 0
                             self.assertEqual(actual, expected)
 
+    def test_normalized_text_blocks_keep_control_and_error_boundaries(self):
+        passive = bytes(byte for byte in range(32) if byte not in range(7, 16) and byte != 27)
+        text = b"\xff" + b"".join(
+            "一e\u0301👩\u200d💻".encode() + bytes([control]) + "\u0301Z".encode()
+            for control in passive
+        )
+        text += b"\xf0\x9f\x00\x91\xa9\x7f\xe2\x7f\x82\xac"
+        text += b"\xff" + b"a" * 61 + b"\xe0\x80\x80\x01" + "\u0301Z".encode()
+        for columns in (1, 2, 7, 80):
+            for setup in (b"", b"\x1b[4h", b"\x1b[?7l"):
+                with self.subTest(columns=columns, setup=setup):
+                    self.assert_wide_stream_matches_bytewise(columns, setup, text)
+
+    def test_normalized_text_trace_matches_bytewise_with_passive_controls(self):
+        text = b"\xffA\x00B\x01\x80\xc2\x80\xe0\x80\x01\x80\xe2\x7f\x82\xac\x1aZ"
+        traces = []
+        for fragmented in (False, True):
+            with Shitty(columns=80, rows=4) as terminal:
+                terminal.parser_trace_on()
+                if fragmented:
+                    terminal.write_chunks(*(bytes([byte]) for byte in text))
+                else:
+                    terminal.write(text)
+                traces.append(terminal.parser_trace())
+        self.assertEqual(traces[0], traces[1])
+
     def test_backspace_does_not_reuse_the_previous_csi_parameter(self):
         with Shitty(columns=20, rows=2) as terminal:
             terminal.write(b"\x1b[10CX\bY")

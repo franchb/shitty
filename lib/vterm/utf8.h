@@ -24,6 +24,20 @@ constexpr const u16 Missing_Glyph_Marker = 0x0000;
 
 constexpr const u16 Unicode_Replacement_Character = 0xfffd;
 
+// Normalized ground-state text. Protocol boundaries between characters
+// travel with the text instead of forcing an immediate screen write.
+struct Utf8Text {
+    static constexpr size_t capacity = 64;
+    u32 codepoints[capacity];
+    u64 resetBefore = 0;
+    size_t count = 0;
+    u8 pendingTrace = 0;
+    bool resetAfter = false;
+    bool full = false;
+    // Printable ASCII and replacements are independent, one-cell glyphs.
+    bool simple = true;
+};
+
 struct Utf8Encoder {
     template <typename Fn>
     static void pushUnicode(u32 cp, Fn&& byteSink) {
@@ -55,6 +69,11 @@ public:
     // truncated sequence. The caller retains that suffix for streaming
     // error recovery. Returns the scalar count and the consumed bytes.
     static size_t decodeRun(const u8* input, size_t length, u32* codepoints, size_t capacity, size_t& consumed);
+
+    // Decode text, malformed-byte replacements and passive C0 boundaries.
+    // Stop before commands with effects. Decoder tails and trace debt carry
+    // across blocks; pendingTrace is both input and output. DEL is transparent.
+    size_t decodeText(const u8* input, size_t length, Utf8Text& text);
 
     // Returns true when a truncated sequence was pending; the replacement
     // character is then readable through getUnicode().

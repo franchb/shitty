@@ -80,6 +80,84 @@ size_t Utf8Decoder::decodeRun(const u8* input, size_t length, u32* codepoints, s
     return count;
 }
 
+size_t Utf8Decoder::decodeText(const u8* input, size_t length, Utf8Text& text) {
+    size_t consumed = 0;
+    text.count = 0;
+    text.resetBefore = 0;
+    text.resetAfter = false;
+    text.full = false;
+    text.simple = true;
+    u8 tracePending = text.pendingTrace;
+    // A complete valid prefix has neither a decoder tail nor trace debt.
+    // Everything else uses the same streaming state as pushByte: no replay
+    // or switch to scalar placement is needed at a block/feed boundary.
+    if (remaining == 0 && tracePending == 0 && length >= 2 && input[0] >= 0xc2 && input[0] <= 0xf4 && (input[1] & 0xc0) == 0x80) {
+        text.count = decodeRun(input, length, text.codepoints, Utf8Text::capacity, consumed);
+        if (text.count != 0) {
+            unicode = text.codepoints[text.count - 1];
+            text.simple = false;
+        }
+    }
+    bool reset = false;
+    const auto append = [&](u32 codepoint) __attribute__((always_inline)) {
+        text.resetBefore |= (u64)(reset) << text.count;
+        reset = false;
+        text.codepoints[text.count++] = codepoint;
+        text.simple &= codepoint < 0x80 || codepoint == Unicode_Replacement_Character;
+    };
+    while (consumed < length && text.count < Utf8Text::capacity - 1) {
+        const u8 byte = input[consumed];
+        if (byte == 0x7f) {
+            ++consumed;
+            continue;
+        }
+        if (byte < 0x20) {
+            if ((byte >= 7 && byte <= 15) || byte == 0x1b) {
+                break;
+            }
+            if (checkPrematureEOS()) {
+                append(unicode);
+            }
+            reset = true;
+        } else if (byte < 0x80) {
+            if (checkPrematureEOS()) {
+                append(unicode);
+            }
+            unicode = byte;
+            append(byte);
+            tracePending = 0;
+        } else {
+            if (byte <= 0x9f && tracePending == 0) {
+                if (checkPrematureEOS()) {
+                    append(unicode);
+                }
+                reset = true;
+            }
+            for (int completed = pushByte(byte); completed != 0; --completed) {
+                append(unicode);
+            }
+            // The protocol trace counts continuation bytes even after an
+            // early decoding error or an intervening C0 flushed the tail.
+            if ((byte & 0xc0) == 0x80 && tracePending != 0) {
+                --tracePending;
+            } else if (byte >= 0xc2 && byte <= 0xdf) {
+                tracePending = 1;
+            } else if (byte >= 0xe0 && byte <= 0xef) {
+                tracePending = 2;
+            } else if (byte >= 0xf0 && byte <= 0xf4) {
+                tracePending = 3;
+            } else {
+                tracePending = 0;
+            }
+        }
+        ++consumed;
+    }
+    text.full = text.count >= Utf8Text::capacity - 1;
+    text.pendingTrace = tracePending;
+    text.resetAfter = reset;
+    return consumed;
+}
+
 bool Utf8Decoder::checkPrematureEOS() {
     if (remaining > 0) {
         remaining = 0;

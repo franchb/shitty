@@ -275,6 +275,7 @@ namespace {
         bool ragelGroundContinuation(u8 ch);
         void ragelGroundHigh(u8 ch);
         void ragelGroundAscii(u8 ch);
+        void traceGroundRun(const u8* bytes, size_t count, u8 pending);
         size_t ragelStringSize() const noexcept;
         const u8* ragelStringData() const noexcept;
         void resetDecoded(size_t offset = 0) noexcept;
@@ -559,6 +560,40 @@ void ParserImpl<traced>::ragelGroundHigh(u8 ch) {
         parser.groundUtf8Remaining = 3;
     } else {
         parser.groundUtf8Remaining = 0;
+    }
+}
+
+template <bool traced>
+void ParserImpl<traced>::traceGroundRun(const u8* bytes, size_t count, u8 pending) {
+    if constexpr (traced) {
+        for (size_t index = 0; index < count; ++index) {
+            const u8 byte = bytes[index];
+            if (byte == 0x7f) {
+                continue;
+            }
+            if (byte < 0x20) {
+                if (byte != 0) {
+                    parserTrace->control(byte);
+                }
+                continue;
+            }
+            if (byte >= 0x80 && byte <= 0x9f && pending == 0) {
+                parserTrace->control(byte);
+            } else {
+                parserTrace->text(bytes + index, 1);
+            }
+            if ((byte & 0xc0) == 0x80 && pending != 0) {
+                --pending;
+            } else if (byte >= 0xc2 && byte <= 0xdf) {
+                pending = 1;
+            } else if (byte >= 0xe0 && byte <= 0xef) {
+                pending = 2;
+            } else if (byte >= 0xf0 && byte <= 0xf4) {
+                pending = 3;
+            } else {
+                pending = 0;
+            }
+        }
     }
 }
 
@@ -2430,14 +2465,14 @@ void ParserImpl<traced>::feed(StringView bytes) {
                 ++p;
                 continue;
             }
-            if (parser.groundUtf8Remaining == 0 && current >= 0x80 && iface.parserUtf8BulkEligible()) {
-                u8 pendingTrace = 0;
+            if ((current >= 0x80 || parser.groundUtf8Remaining != 0) && iface.parserUtf8BulkEligible()) {
+                u8 pendingTrace = parser.groundUtf8Remaining;
                 const size_t consumed = iface.parserPlaceUtf8Run(StringView(p, pe - p), pendingTrace);
                 if (consumed > 0) {
-                    parser.groundUtf8Remaining = pendingTrace;
                     if constexpr (traced) {
-                        parserTrace->text(p, consumed);
+                        traceGroundRun(p, consumed, parser.groundUtf8Remaining);
                     }
+                    parser.groundUtf8Remaining = pendingTrace;
                     p += consumed;
                     continue;
                 }

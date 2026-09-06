@@ -17,7 +17,6 @@ from pathlib import Path
 # resolve inside lib/vterm, and they are ours, not lib/shitty's.
 GENERATED = {
     "parser.rl.h",
-    "utf8_dfa.h",
     "input_keys.h",
     "unicode_data.h",
 }
